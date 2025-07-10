@@ -531,18 +531,18 @@ def main():
         print(f"📋 Default config - num_parallel_envs: {config['num_parallel_envs']}")
     
     # Override with command line arguments
-    if args.output_dir:
-        config['output_dir'] = args.output_dir
-        print(f"🔧 Command line override - output_dir: {args.output_dir}")
-    if args.num_episodes:
-        config['num_episodes'] = args.num_episodes
-        print(f"🔧 Command line override - num_episodes: {args.num_episodes}")
-    if args.num_parallel_envs:
-        config['num_parallel_envs'] = args.num_parallel_envs
-        print(f"🔧 Command line override - num_parallel_envs: {args.num_parallel_envs}")
-    if args.parallel_method:
-        config['parallel_method'] = args.parallel_method
-        print(f"🔧 Command line override - parallel_method: {args.parallel_method}")
+#    if args.output_dir:
+#        config['output_dir'] = args.output_dir
+#        print(f"🔧 Command line override - output_dir: {args.output_dir}")
+#    if args.num_episodes:
+#        config['num_episodes'] = args.num_episodes
+#        print(f"🔧 Command line override - num_episodes: {args.num_episodes}")
+#    if args.num_parallel_envs:
+#        config['num_parallel_envs'] = args.num_parallel_envs
+#        print(f"🔧 Command line override - num_parallel_envs: {args.num_parallel_envs}")
+#    if args.parallel_method:
+#        config['parallel_method'] = args.parallel_method
+#        print(f"🔧 Command line override - parallel_method: {args.parallel_method}")
     
     print(f"\n🎯 Final configuration:")
     print(f"   - num_parallel_envs: {config['num_parallel_envs']}")
