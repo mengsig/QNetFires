@@ -14,6 +14,10 @@ import os
 import sys
 import argparse
 import numpy as np
+
+# Set matplotlib backend for non-interactive use
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.animation import FuncAnimation
@@ -30,13 +34,34 @@ sys.path.insert(0, project_root)
 sys.path.insert(0, src_path)
 
 try:
-    from src.scripts.DQNAgent import DQNAgent
-    from src.scripts.DomiRankMemoryLoader import DomiRankMemoryLoader
-    from src.scripts.FireEnv import FireEnv
-    from src.utils.loadingUtils import load_all_rasters
+    # Try multiple import paths to handle different project structures
+    try:
+        from src.scripts.DQNAgent import DQNAgent
+        from src.scripts.DomiRankMemoryLoader import DomiRankMemoryLoader
+        from src.scripts.FireEnv import FireEnv
+    except ImportError:
+        # Alternative import path
+        from scripts.DQNAgent import DQNAgent
+        from scripts.DomiRankMemoryLoader import DomiRankMemoryLoader
+        from scripts.FireEnv import FireEnv
+    
+    # Try to import loading utils (optional)
+    try:
+        from src.utils.loadingUtils import load_all_rasters
+    except ImportError:
+        try:
+            from utils.loadingUtils import load_all_rasters
+        except ImportError:
+            load_all_rasters = None
+            
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("Make sure you're running from the project root directory")
+    print("Required files:")
+    print("- src/scripts/DQNAgent.py")
+    print("- src/scripts/DomiRankMemoryLoader.py") 
+    print("- src/scripts/FireEnv.py")
+    print("- src/scripts/Simulate.py")
     sys.exit(1)
 
 
@@ -51,7 +76,11 @@ class FuelBreakVisualizer:
     def __init__(self, model_path: str, config: Dict = None):
         """Initialize the visualizer with a trained model."""
         self.model_path = model_path
-        self.config = config or self._get_default_config()
+        default_config = self._get_default_config()
+        if config:
+            # Merge provided config with defaults
+            default_config.update(config)
+        self.config = default_config
         
         print(f"🎬 Initializing Fuel Break Visualizer")
         print(f"   - Model: {model_path}")
@@ -260,8 +289,13 @@ class FuelBreakVisualizer:
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             print(f"💾 Static visualization saved to {save_path}")
+        else:
+            # Save to a temporary file for viewing
+            default_path = f"fuel_breaks_visualization_{int(time.time())}.png"
+            plt.savefig(default_path, dpi=300, bbox_inches='tight')
+            print(f"💾 Static visualization saved to {default_path}")
         
-        plt.show()
+        plt.close()  # Close the figure to free memory
     
     def visualize_animated(self, landscape_data: Dict[str, np.ndarray],
                           save_path: str = None) -> None:
@@ -320,9 +354,15 @@ class FuelBreakVisualizer:
         if save_path:
             print(f"💾 Saving animation to {save_path} (this may take a while)...")
             anim.save(save_path, writer='pillow', fps=2)
-            print(f"✅ Animation saved!")
+            print(f"✅ Animation saved to {save_path}!")
+        else:
+            # Save to a temporary file
+            default_path = f"fuel_breaks_animation_{int(time.time())}.gif"
+            print(f"💾 Saving animation to {default_path} (this may take a while)...")
+            anim.save(default_path, writer='pillow', fps=2)
+            print(f"✅ Animation saved to {default_path}!")
         
-        plt.show()
+        plt.close()  # Close the figure to free memory
         return anim
     
     def create_comparison_plot(self, landscape_data: Dict[str, np.ndarray],
@@ -369,7 +409,12 @@ class FuelBreakVisualizer:
             axes[2].axis('off')
             
             plt.tight_layout()
-            plt.show()
+            
+            # Save comparison plot
+            comparison_path = f"fuel_breaks_comparison_{int(time.time())}.png"
+            plt.savefig(comparison_path, dpi=300, bbox_inches='tight')
+            print(f"💾 Comparison plot saved to {comparison_path}")
+            plt.close()
             
             # Print comparison statistics
             overlap = np.sum(domirank_breaks & self.current_fuel_breaks)
@@ -507,7 +552,10 @@ def main():
         
         # Animated visualization
         if not args.no_animation:
+            print("🎬 Creating animated visualization...")
             visualizer.visualize_animated(landscape_data, args.save_animation)
+        else:
+            print("⏩ Skipping animation (--no_animation flag set)")
         
         # Comparison with domirank
         if args.comparison:
