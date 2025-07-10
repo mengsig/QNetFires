@@ -245,11 +245,11 @@ class ParallelFuelBreakTrainer:
         # Get performance statistics
         perf_stats = self.experience_collector.get_performance_stats()
         
-        # Combine all statistics
+        # Combine all statistics - prioritize collection_stats mean_reward over env_stats
         episode_results = {
-            **collection_stats,
             **env_stats,
             **perf_stats,
+            **collection_stats,  # Put this last so it overwrites env_stats mean_reward
             'agent_epsilon': self.agent.epsilon,
             'agent_losses_count': len(self.agent.losses)
         }
@@ -483,7 +483,7 @@ def get_default_parallel_config():
         
         # Parallel training settings
         'num_episodes': 100,
-        'num_parallel_envs': 4,
+        'num_parallel_envs': 8,
         'parallel_method': 'threading',
         'max_workers': None,
         'steps_per_episode': 50,
@@ -521,20 +521,33 @@ def main():
     
     # Load configuration
     if args.config:
+        print(f"📄 Loading configuration from: {args.config}")
         with open(args.config, 'r') as f:
             config = json.load(f)
+        print(f"✅ Config loaded - num_parallel_envs: {config.get('num_parallel_envs', 'NOT SET')}")
     else:
+        print("⚠️  No config file specified, using default configuration")
         config = get_default_parallel_config()
+        print(f"📋 Default config - num_parallel_envs: {config['num_parallel_envs']}")
     
     # Override with command line arguments
     if args.output_dir:
         config['output_dir'] = args.output_dir
+        print(f"🔧 Command line override - output_dir: {args.output_dir}")
     if args.num_episodes:
         config['num_episodes'] = args.num_episodes
+        print(f"🔧 Command line override - num_episodes: {args.num_episodes}")
     if args.num_parallel_envs:
         config['num_parallel_envs'] = args.num_parallel_envs
+        print(f"🔧 Command line override - num_parallel_envs: {args.num_parallel_envs}")
     if args.parallel_method:
         config['parallel_method'] = args.parallel_method
+        print(f"🔧 Command line override - parallel_method: {args.parallel_method}")
+    
+    print(f"\n🎯 Final configuration:")
+    print(f"   - num_parallel_envs: {config['num_parallel_envs']}")
+    print(f"   - memory_simulations: {config.get('memory_simulations', 'NOT SET')}")
+    print(f"   - grid_size: {config.get('grid_size', 'NOT SET')}")
     
     # Add timestamp to output directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -200,10 +200,13 @@ class VectorizedFireEnv:
     
     def get_episode_stats(self) -> Dict:
         """Get statistics about current episodes."""
+        # Note: episode_rewards get reset after each step since FireEnv episodes are single-step
+        # So we calculate mean from the current episode rewards which may be mostly zeros
+        current_mean = np.mean(self.episode_rewards) if self.episode_rewards else 0.0
         return {
             'episode_rewards': self.episode_rewards.copy(),
             'episode_steps': self.episode_steps.copy(),
-            'mean_reward': np.mean(self.episode_rewards),
+            'mean_reward': current_mean,
             'mean_steps': np.mean(self.episode_steps),
             'active_environments': self.num_envs
         }
