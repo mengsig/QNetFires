@@ -308,12 +308,14 @@ class ParallelExperienceCollector:
             # Step all environments
             next_observations, rewards, dones, infos = self.vectorized_env.step(actions)
             
-            # Debug: Print rewards for first few steps
+            # Debug: Print rewards for first few steps (show all environments)
             if step < 3:
-                print(f"   🎯 Step {step} rewards: {rewards[:min(3, len(rewards))]}")
-                for i, info in enumerate(infos[:min(3, len(infos))]):
+                print(f"   🎯 Step {step} rewards: {rewards}")
+                for i, info in enumerate(infos):
                     if 'acres_burned' in info:
                         print(f"      Env {i}: {info['acres_burned']:.1f} acres burned, reward: {rewards[i]:.2f}")
+                    else:
+                        print(f"      Env {i}: No acres_burned info, reward: {rewards[i]:.2f}")
             
             # Store experiences
             for i in range(self.vectorized_env.num_envs):

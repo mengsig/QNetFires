@@ -77,7 +77,14 @@ class FireEnv(gym.Env):
         num_sims = getattr(self, 'num_simulations', 100)
         max_duration = getattr(self, 'max_duration', None)
         
-        self.sim.run_many_simulations(num_sims, max_duration)
+        # Enable parallel fire simulations for better performance
+        self.sim._debug_parallel = True  # Enable debug output
+        self.sim.run_many_simulations(
+            num_sims, 
+            max_duration, 
+            use_parallel=True, 
+            max_workers=min(4, num_sims)
+        )
         obs = self.sim.get_burned()
         # cast to uint8 for the observation
         # 3) compute reward
