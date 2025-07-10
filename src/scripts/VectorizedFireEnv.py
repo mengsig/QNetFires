@@ -48,6 +48,15 @@ class VectorizedFireEnv:
         self.num_simulations = num_simulations
         self.max_duration = max_duration
         
+        print(f"🚀 VectorizedFireEnv configuration:")
+        print(f"   - Requested environments: {num_envs}")
+        print(f"   - Available landscapes: {len(landscape_data_list)}")
+        print(f"   - Final num_envs: {self.num_envs}")
+        print(f"   - Method: {method}")
+        print(f"   - Max workers: {self.max_workers}")
+        print(f"   - Fire simulations per step: {num_simulations}")
+        print(f"   - Max duration: {max_duration} minutes")
+        
         # Create environments
         self.envs = []
         for i in range(self.num_envs):
@@ -283,17 +292,25 @@ class ParallelExperienceCollector:
                 # Get action from agent
                 action = self.agent.act(state_tensor, current_fuel_breaks[i])
                 
-                # Convert action to fuel break mask
-                action_mask = self._action_to_fuel_break_mask(action, current_fuel_breaks[i])
-                actions.append(action_mask.flatten().astype(int))
-                
-                # Update current fuel breaks
+                # Update current fuel breaks for tracking
                 row = action // self.vectorized_env.envs[i].W
                 col = action % self.vectorized_env.envs[i].W
                 current_fuel_breaks[i][row, col] = True
+                
+                # Create action for FireEnv: full fuel break pattern as flat binary array
+                # FireEnv expects the COMPLETE fuel break pattern, not just the new placement
+                action_for_env = current_fuel_breaks[i].flatten().astype(int)
+                actions.append(action_for_env)
             
             # Step all environments
             next_observations, rewards, dones, infos = self.vectorized_env.step(actions)
+            
+            # Debug: Print rewards for first few steps
+            if step < 3:
+                print(f"   🎯 Step {step} rewards: {rewards[:min(3, len(rewards))]}")
+                for i, info in enumerate(infos[:min(3, len(infos))]):
+                    if 'acres_burned' in info:
+                        print(f"      Env {i}: {info['acres_burned']:.1f} acres burned, reward: {rewards[i]:.2f}")
             
             # Store experiences
             for i in range(self.vectorized_env.num_envs):
@@ -355,15 +372,7 @@ class ParallelExperienceCollector:
         landscape_data = self.vectorized_env.landscape_data_list[env_id % len(self.vectorized_env.landscape_data_list)]
         return landscape_data
     
-    def _action_to_fuel_break_mask(self, action: int, current_fuel_breaks: np.ndarray) -> np.ndarray:
-        """Convert action index to fuel break mask."""
-        H, W = current_fuel_breaks.shape
-        row = action // W
-        col = action % W
-        
-        new_fuel_breaks = current_fuel_breaks.copy()
-        new_fuel_breaks[row, col] = True
-        return new_fuel_breaks
+
     
     def _mask_to_action(self, fuel_break_mask: np.ndarray) -> int:
         """Convert fuel break mask back to action index (for memory storage)."""

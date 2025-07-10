@@ -51,21 +51,43 @@ class ParallelFuelBreakTrainer:
         self.config = config
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
+        print(f"🔧 Initializing with config:")
+        print(f"   - num_landscapes: {config['num_landscapes']}")
+        print(f"   - num_parallel_envs: {config['num_parallel_envs']}")
+        print(f"   - memory_simulations: {config['memory_simulations']}")
+        
         # Load landscape data for all environments
         self.memory_loader = DomiRankMemoryLoader(
             raster_dir=config['raster_dir'],
             grid_size=config['grid_size']
         )
         
-        # Generate or load landscape data
+        # Generate or load landscape data - ensure we have enough landscapes
         if not os.path.exists(config['raster_dir']):
+            print(f"🏞️  Generating {config['num_landscapes']} landscape files...")
             self.memory_loader.generate_sample_data(config['num_landscapes'])
         
         # Load landscape data for vectorized environments
         self.landscape_data_list = []
-        for i in range(config['num_landscapes']):
-            landscape_data = self.memory_loader.load_landscape_data(i)
-            self.landscape_data_list.append(landscape_data)
+        available_landscapes = min(config['num_landscapes'], self._count_available_landscapes())
+        
+        print(f"📂 Loading {available_landscapes} available landscapes...")
+        for i in range(available_landscapes):
+            try:
+                landscape_data = self.memory_loader.load_landscape_data(i)
+                self.landscape_data_list.append(landscape_data)
+                if i < 3:  # Only print first few
+                    print(f"   ✅ Loaded landscape {i}")
+            except Exception as e:
+                print(f"   ❌ Failed to load landscape {i}: {e}")
+                break
+        
+        print(f"📊 Landscape data summary:")
+        print(f"   - Available landscapes: {len(self.landscape_data_list)}")
+        print(f"   - Will cycle through landscapes for {config['num_parallel_envs']} environments")
+        
+        if len(self.landscape_data_list) == 0:
+            raise ValueError("No landscape data available! Check your data files.")
         
         # Initialize DQN agent
         self.agent = DQNAgent(
@@ -113,6 +135,19 @@ class ParallelFuelBreakTrainer:
         
         # Create output directories
         self.setup_output_directories()
+    
+    def _count_available_landscapes(self) -> int:
+        """Count how many landscape files are actually available."""
+        count = 0
+        while True:
+            try:
+                self.memory_loader.load_landscape_data(count)
+                count += 1
+                if count > 1000:  # Reasonable upper limit
+                    break
+            except:
+                break
+        return count
         
     def setup_output_directories(self):
         """Create directories for outputs."""
