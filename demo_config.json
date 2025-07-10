@@ -1,0 +1,26 @@
+{
+  "raster_dir": "cropped_raster",
+  "grid_size": 50,
+  "input_channels": 8,
+  "num_landscapes": 3,
+  
+  "num_episodes": 50,
+  "max_fuel_break_percentage": 20.0,
+  "percentage_increment": 1.0,
+  "memory_simulations": 3,
+  "pretrain_steps": 100,
+  
+  "learning_rate": 1e-4,
+  "gamma": 0.95,
+  "initial_epsilon": 1.0,
+  "epsilon_min": 0.01,
+  "epsilon_decay": 0.995,
+  "buffer_size": 10000,
+  "batch_size": 16,
+  
+  "target_update_frequency": 10,
+  "checkpoint_frequency": 10,
+  
+  "output_dir": "demo_outputs",
+  "regenerate_memories": true
+}
