@@ -367,6 +367,13 @@ class ParallelExperienceCollector:
         stats['total_experiences'] = self.total_experiences_collected
         stats['mean_reward'] = np.mean(stats['total_rewards']) if stats['total_rewards'] else 0
         
+        # Debug output for mean reward calculation
+        if stats['total_rewards']:
+            print(f"   📊 Reward calculation debug:")
+            print(f"      - Total rewards collected: {len(stats['total_rewards'])}")
+            print(f"      - Reward range: [{min(stats['total_rewards']):.1f}, {max(stats['total_rewards']):.1f}]")
+            print(f"      - Mean reward: {stats['mean_reward']:.2f}")
+        
         return stats
     
     def _obs_to_landscape_data(self, obs: np.ndarray, env_id: int) -> Dict:

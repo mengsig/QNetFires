@@ -327,13 +327,12 @@ class ParallelFuelBreakTrainer:
         self.save_training_metrics()
         self.plot_training_progress()
         
-        # Cleanup
-        self.vectorized_env.close()
-        
         print("\nParallel training completed!")
         print(f"Best reward achieved: {self.training_metrics['best_reward']:.2f}")
         print(f"Total experiences collected: {self.training_metrics['total_experiences']}")
         print(f"Final epsilon: {self.agent.epsilon:.3f}")
+        
+        # Keep vectorized environment open for evaluation - will be closed later
         
     def save_training_metrics(self):
         """Save training metrics to file."""
@@ -461,10 +460,10 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='Train Deep Q-Learning agent with parallel environments')
     
     parser.add_argument('--config', type=str, help='Path to config file')
-    parser.add_argument('--output_dir', type=str, default='outputs', help='Output directory')
-    parser.add_argument('--num_episodes', type=int, default=100, help='Number of training episodes')
-    parser.add_argument('--num_parallel_envs', type=int, default=4, help='Number of parallel environments')
-    parser.add_argument('--parallel_method', type=str, default='threading', 
+    parser.add_argument('--output_dir', type=str, help='Output directory')
+    parser.add_argument('--num_episodes', type=int, help='Number of training episodes')
+    parser.add_argument('--num_parallel_envs', type=int, help='Number of parallel environments')
+    parser.add_argument('--parallel_method', type=str, 
                        choices=['threading', 'multiprocessing', 'sequential'],
                        help='Parallelization method')
     parser.add_argument('--evaluate_only', type=str, help='Path to model for evaluation only')
@@ -530,19 +529,23 @@ def main():
         config = get_default_parallel_config()
         print(f"📋 Default config - num_parallel_envs: {config['num_parallel_envs']}")
     
-    # Override with command line arguments
-    if args.output_dir:
+    # Override with command line arguments (only if explicitly provided)
+    if args.output_dir is not None:
         config['output_dir'] = args.output_dir
         print(f"🔧 Command line override - output_dir: {args.output_dir}")
-    if args.num_episodes:
+    if args.num_episodes is not None:
         config['num_episodes'] = args.num_episodes
         print(f"🔧 Command line override - num_episodes: {args.num_episodes}")
-    if args.num_parallel_envs:
+    if args.num_parallel_envs is not None:
         config['num_parallel_envs'] = args.num_parallel_envs
         print(f"🔧 Command line override - num_parallel_envs: {args.num_parallel_envs}")
-    if args.parallel_method:
+    if args.parallel_method is not None:
         config['parallel_method'] = args.parallel_method
         print(f"🔧 Command line override - parallel_method: {args.parallel_method}")
+    
+    # Set defaults for missing values
+    if 'output_dir' not in config:
+        config['output_dir'] = 'outputs'
     
     print(f"\n🎯 Final configuration:")
     print(f"   - num_parallel_envs: {config['num_parallel_envs']}")
@@ -568,6 +571,11 @@ def main():
         if os.path.exists(best_model_path):
             print("\nEvaluating best model...")
             trainer.evaluate_model(best_model_path)
+    
+    # Final cleanup
+    print("🧹 Cleaning up resources...")
+    trainer.vectorized_env.close()
+    print("✅ Cleanup completed")
 
 
 if __name__ == "__main__":
