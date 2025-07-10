@@ -107,7 +107,7 @@ class FuelBreakVisualizer:
             'input_channels': 8,
             'raster_dir': 'cropped_raster',
             'max_fuel_breaks': 30,
-            'fire_simulation_steps': 5,  # For validation
+            'fire_simulation_steps': 3,  # For validation (reduced for speed)
             'animation_speed': 500  # milliseconds between frames
         }
     
@@ -198,9 +198,14 @@ class FuelBreakVisualizer:
                 fuel_model=landscape_data['fbfm']
             )
             fire_env.num_simulations = self.config['fire_simulation_steps']
-            print(f"🔥 Fire simulation enabled for validation")
+            fire_env.max_duration = 30  # Set a reasonable max duration for visualization
+            
+            # IMPORTANT: Reset the environment to initialize the simulator
+            fire_env.reset()
+            print(f"🔥 Fire simulation enabled for validation ({fire_env.num_simulations} sims, {fire_env.max_duration} min max)")
         except Exception as e:
             print(f"⚠️  Fire simulation disabled: {e}")
+            fire_env = None
         
         # Step-by-step placement
         for step in range(max_steps):
@@ -228,12 +233,24 @@ class FuelBreakVisualizer:
             reward = 0.0
             if fire_env is not None:
                 try:
+                    # Reset environment before each step to ensure clean state
+                    fire_env.reset()
+                    
+                    # Create action array for fire environment
                     action_array = self.current_fuel_breaks.flatten().astype(int)
+                    
+                    # Step the fire environment
                     _, reward, _, info = fire_env.step(action_array)
-                    print(f"   💰 Reward: {reward:.1f} (acres burned: {info.get('acres_burned', 'N/A')})")
+                    
+                    # Print reward information
+                    acres_burned = info.get('acres_burned', 'N/A')
+                    print(f"   💰 Reward: {reward:.1f} (acres burned: {acres_burned})")
+                    
                 except Exception as e:
                     print(f"   ⚠️  Reward calculation failed: {e}")
                     reward = 0.0
+            else:
+                print(f"   ⚠️  Fire simulation not available, reward: 0.0")
             
             self.reward_history.append(reward)
         
