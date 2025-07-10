@@ -28,7 +28,8 @@ class VectorizedFireEnv:
     """
     
     def __init__(self, landscape_data_list: List[Dict], num_envs: int = None, 
-                 method: str = 'threading', max_workers: int = None):
+                 method: str = 'threading', max_workers: int = None,
+                 num_simulations: int = 10, max_duration: int = None):
         """
         Initialize vectorized fire environment.
         
@@ -37,11 +38,15 @@ class VectorizedFireEnv:
             num_envs: Number of parallel environments (defaults to len(landscape_data_list))
             method: 'threading', 'multiprocessing', or 'sequential'
             max_workers: Maximum number of worker threads/processes
+            num_simulations: Number of simulations to run in run_many_simulations
+            max_duration: Maximum duration for each simulation (minutes)
         """
         self.landscape_data_list = landscape_data_list
         self.num_envs = num_envs or len(landscape_data_list)
         self.method = method
         self.max_workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
+        self.num_simulations = num_simulations
+        self.max_duration = max_duration
         
         # Create environments
         self.envs = []
@@ -57,6 +62,9 @@ class VectorizedFireEnv:
                 ch=landscape_data['ch'],
                 fuel_model=landscape_data['fbfm']
             )
+            # Store configuration
+            env.num_simulations = self.num_simulations
+            env.max_duration = self.max_duration
             self.envs.append(env)
         
         # Initialize executor based on method
@@ -343,9 +351,7 @@ class ParallelExperienceCollector:
     
     def _obs_to_landscape_data(self, obs: np.ndarray, env_id: int) -> Dict:
         """Convert environment observation back to landscape data format."""
-        # This is a placeholder - in practice, you'd need to maintain 
-        # the landscape data or modify the environment to provide it
-        env = self.vectorized_env.envs[env_id]
+        # Use the stored landscape data for this environment
         landscape_data = self.vectorized_env.landscape_data_list[env_id % len(self.vectorized_env.landscape_data_list)]
         return landscape_data
     

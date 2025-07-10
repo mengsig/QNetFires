@@ -80,12 +80,14 @@ class ParallelFuelBreakTrainer:
             batch_size=config['batch_size']
         )
         
-        # Initialize vectorized environment
+        # Initialize vectorized environment with fire simulation parameters
         self.vectorized_env = VectorizedFireEnv(
             landscape_data_list=self.landscape_data_list,
             num_envs=config['num_parallel_envs'],
             method=config['parallel_method'],
-            max_workers=config.get('max_workers', None)
+            max_workers=config.get('max_workers', None),
+            num_simulations=config['memory_simulations'],
+            max_duration=config.get('fire_simulation_max_duration', None)
         )
         
         # Initialize experience collector
@@ -142,7 +144,8 @@ class ParallelFuelBreakTrainer:
             memories = self.memory_loader.generate_training_memories(
                 landscape_indices=landscape_indices,
                 percentages=percentages,
-                num_simulations=self.config['memory_simulations']
+                num_simulations=self.config['memory_simulations'],
+                max_duration=self.config.get('fire_simulation_max_duration', None)
             )
             
             # Save memories

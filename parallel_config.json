@@ -13,9 +13,10 @@
   "collection_batch_size": 64,
   "experience_buffer_size": 1000,
   
-  "memory_simulations": 2,
+  "memory_simulations": 50,
   "pretrain_steps": 100,
   "percentage_increment": 2,
+  "fire_simulation_max_duration": 120,
   
   "learning_rate": 1e-4,
   "gamma": 0.95,

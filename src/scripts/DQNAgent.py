@@ -211,8 +211,19 @@ class DQNAgent:
                  epsilon_min=0.01, epsilon_decay=0.995,
                  buffer_size=100000, batch_size=32):
         
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"Using device: {self.device}")
+        # Enhanced GPU detection and setup
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+            print(f"CUDA available! Using GPU: {torch.cuda.get_device_name(0)}")
+            print(f"CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+            # Enable optimizations
+            torch.backends.cudnn.benchmark = True
+            torch.cuda.empty_cache()
+        else:
+            self.device = torch.device("cpu")
+            print("CUDA not available, using CPU")
+        
+        print(f"DQN Agent device: {self.device}")
         
         self.grid_size = grid_size
         self.action_dim = grid_size * grid_size
@@ -225,6 +236,11 @@ class DQNAgent:
         # Initialize networks
         self.q_network = DQNNetwork(input_channels, grid_size).to(self.device)
         self.target_network = DQNNetwork(input_channels, grid_size).to(self.device)
+        
+        # Print network info
+        total_params = sum(p.numel() for p in self.q_network.parameters())
+        trainable_params = sum(p.numel() for p in self.q_network.parameters() if p.requires_grad)
+        print(f"Network parameters: {total_params:,} total, {trainable_params:,} trainable")
         
         # Copy weights to target network
         self.update_target_network()

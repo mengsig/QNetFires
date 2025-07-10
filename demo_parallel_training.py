@@ -53,7 +53,9 @@ def test_parallel_environments():
                 landscape_data_list=landscape_data_list,
                 num_envs=num_envs,
                 method=method,
-                max_workers=2
+                max_workers=2,
+                num_simulations=5,
+                max_duration=60
             )
             
             # Test performance
@@ -127,7 +129,9 @@ def test_parallel_training():
             landscape_data_list=landscape_data_list,
             num_envs=num_envs,
             method='threading',
-            max_workers=2
+            max_workers=2,
+            num_simulations=5,
+            max_duration=60
         )
         
         collector = ParallelExperienceCollector(
@@ -182,7 +186,9 @@ def demo_scalability():
             landscape_data_list=landscape_data_list,
             num_envs=num_envs,
             method='threading',
-            max_workers=min(4, num_envs)
+            max_workers=min(4, num_envs),
+            num_simulations=3,
+            max_duration=30
         )
         
         # Measure throughput

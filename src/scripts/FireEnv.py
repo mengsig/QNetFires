@@ -72,9 +72,12 @@ class FireEnv(gym.Env):
         mask = action.reshape((self.H, self.W)).astype(bool)
         self.sim.set_fuel_breaks(mask)
 
-        # 2) run one simulation from the ignite point
+        # 2) run simulations with configurable parameters
         x0, y0 = self.ignite_point
-        self.sim.run_many_simulations(100)
+        num_sims = getattr(self, 'num_simulations', 100)
+        max_duration = getattr(self, 'max_duration', None)
+        
+        self.sim.run_many_simulations(num_sims, max_duration)
         obs = self.sim.get_burned()
         # cast to uint8 for the observation
         # 3) compute reward
@@ -87,7 +90,9 @@ class FireEnv(gym.Env):
         # 5) info dict
         info = {
             "acres_burned": acres,
-            "total_cells": self.H * self.W
+            "total_cells": self.H * self.W,
+            "num_simulations": num_sims,
+            "max_duration": max_duration
         }
         self.last_firemap = obs
 

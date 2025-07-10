@@ -205,7 +205,8 @@ class DomiRankMemoryLoader:
     
     def evaluate_fuel_break_performance(self, landscape_data: Dict[str, np.ndarray], 
                                       fuel_breaks: np.ndarray, 
-                                      num_simulations: int = 10) -> float:
+                                      num_simulations: int = 10,
+                                      max_duration: int = None) -> float:
         """
         Evaluate the performance of fuel breaks using fire simulation.
         
@@ -234,8 +235,8 @@ class DomiRankMemoryLoader:
         # Apply fuel breaks
         simulator.set_fuel_breaks(fuel_breaks)
         
-        # Run multiple simulations
-        simulator.run_many_simulations(num_simulations)
+        # Run multiple simulations with optional max_duration
+        simulator.run_many_simulations(num_simulations, max_duration)
         
         # Return negative acres burned as reward (minimize fire damage)
         acres_burned = simulator.get_loss()
@@ -243,7 +244,8 @@ class DomiRankMemoryLoader:
     
     def generate_training_memories(self, landscape_indices: List[int], 
                                  percentages: List[float] = None,
-                                 num_simulations: int = 5) -> List[Tuple]:
+                                 num_simulations: int = 5,
+                                 max_duration: int = None) -> List[Tuple]:
         """
         Generate training memories from domirank-based fuel breaks.
         
@@ -298,7 +300,7 @@ class DomiRankMemoryLoader:
                         
                         # Evaluate reward for this fuel break configuration
                         reward = self.evaluate_fuel_break_performance(
-                            landscape_data, target_fuel_breaks, num_simulations
+                            landscape_data, target_fuel_breaks, num_simulations, max_duration
                         )
                         
                         # Create experience tuple
