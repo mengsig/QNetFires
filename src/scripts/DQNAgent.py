@@ -168,10 +168,27 @@ class ReplayBuffer:
         """Sample a batch of experiences."""
         experiences = random.sample(self.buffer, batch_size)
         
-        states = torch.stack([e.state for e in experiences])
+        # Ensure states are 3D (C, H, W) before stacking
+        states_list = []
+        next_states_list = []
+        
+        for e in experiences:
+            state = e.state
+            next_state = e.next_state
+            
+            # If state has batch dimension, remove it
+            if state.dim() == 4 and state.size(0) == 1:
+                state = state.squeeze(0)
+            if next_state.dim() == 4 and next_state.size(0) == 1:
+                next_state = next_state.squeeze(0)
+                
+            states_list.append(state)
+            next_states_list.append(next_state)
+        
+        states = torch.stack(states_list)  # Should be (batch_size, channels, height, width)
         actions = torch.tensor([e.action for e in experiences], dtype=torch.long)
         rewards = torch.tensor([e.reward for e in experiences], dtype=torch.float32)
-        next_states = torch.stack([e.next_state for e in experiences])
+        next_states = torch.stack(next_states_list)
         dones = torch.tensor([e.done for e in experiences], dtype=torch.bool)
         
         return states, actions, rewards, next_states, dones
@@ -286,6 +303,11 @@ class DQNAgent:
     
     def remember(self, state, action, reward, next_state, done):
         """Store experience in replay buffer."""
+        # Remove batch dimension if present when storing
+        if state.dim() == 4 and state.size(0) == 1:
+            state = state.squeeze(0)
+        if next_state.dim() == 4 and next_state.size(0) == 1:
+            next_state = next_state.squeeze(0)
         self.memory.push(state.cpu(), action, reward, next_state.cpu(), done)
     
     def replay(self):

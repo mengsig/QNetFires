@@ -308,11 +308,15 @@ class DomiRankMemoryLoader:
                         # Store memory
                         done = (i == len(percentages) - 1)  # Last step in sequence
                         
+                        # Store states without batch dimension
+                        state_to_store = state_tensor.squeeze(0) if state_tensor.dim() == 4 and state_tensor.size(0) == 1 else state_tensor
+                        next_state_to_store = next_state_tensor.squeeze(0) if next_state_tensor.dim() == 4 and next_state_tensor.size(0) == 1 else next_state_tensor
+                        
                         memories.append({
-                            'state': state_tensor.cpu(),
+                            'state': state_to_store.cpu(),
                             'action': action,
                             'reward': reward,
-                            'next_state': next_state_tensor.cpu(),
+                            'next_state': next_state_to_store.cpu(),
                             'done': done,
                             'landscape_idx': idx,
                             'percentage': percentage,

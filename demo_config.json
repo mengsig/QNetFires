@@ -1,25 +1,25 @@
 {
   "raster_dir": "cropped_raster",
-  "grid_size": 50,
+  "grid_size": 25,
   "input_channels": 8,
-  "num_landscapes": 3,
+  "num_landscapes": 2,
   
-  "num_episodes": 50,
-  "max_fuel_break_percentage": 20.0,
-  "percentage_increment": 1.0,
-  "memory_simulations": 3,
-  "pretrain_steps": 100,
+  "num_episodes": 20,
+  "max_fuel_break_percentage": 10.0,
+  "percentage_increment": 2.0,
+  "memory_simulations": 2,
+  "pretrain_steps": 50,
   
   "learning_rate": 1e-4,
   "gamma": 0.95,
   "initial_epsilon": 1.0,
   "epsilon_min": 0.01,
   "epsilon_decay": 0.995,
-  "buffer_size": 10000,
-  "batch_size": 16,
+  "buffer_size": 1000,
+  "batch_size": 8,
   
-  "target_update_frequency": 10,
-  "checkpoint_frequency": 10,
+  "target_update_frequency": 5,
+  "checkpoint_frequency": 5,
   
   "output_dir": "demo_outputs",
   "regenerate_memories": true

@@ -124,11 +124,26 @@ class IterativeFuelBreakTrainer:
         # Add memories to agent's replay buffer
         print("Adding memories to agent's replay buffer...")
         for memory in tqdm(memories, desc="Loading memories"):
+            # Ensure states are tensors and have correct dimensions
+            state = memory['state']
+            next_state = memory['next_state']
+            
+            if not isinstance(state, torch.Tensor):
+                state = torch.tensor(state)
+            if not isinstance(next_state, torch.Tensor):
+                next_state = torch.tensor(next_state)
+                
+            # Add batch dimension if needed for the remember method
+            if state.dim() == 3:
+                state = state.unsqueeze(0)
+            if next_state.dim() == 3:
+                next_state = next_state.unsqueeze(0)
+            
             self.agent.remember(
-                state=memory['state'],
+                state=state,
                 action=memory['action'],
                 reward=memory['reward'],
-                next_state=memory['next_state'],
+                next_state=next_state,
                 done=memory['done']
             )
         
