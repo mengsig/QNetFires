@@ -6,7 +6,7 @@ import numpy as np
 Utility functions for loading raster data used in fire spread modeling.
 """
 
-def load_raster(name, x_interval=None, y_interval=None, raster_dir="cropped_rasters"):
+def load_raster(name):
     """
     Loads a cropped raster and optionally sub-windows it.
 
@@ -24,23 +24,23 @@ def load_raster(name, x_interval=None, y_interval=None, raster_dir="cropped_rast
     np.ndarray: A 2D array of the raster data (float32) with shape (rows, cols).
     """
 
-    path = os.path.join(raster_dir, f"{name}_cropped.tif")
+    path = name
+    y_interval = None
+    x_interval = None
     with rasterio.open(path) as src:
         data = src.read(1)  # full 2D array, shape (rows, cols)
 
-    # Apply subwindowing if requested
-    if y_interval is not None or x_interval is not None:
         rows, cols = data.shape
         y0, y1 = y_interval if y_interval is not None else (0, rows)
         x0, x1 = x_interval if x_interval is not None else (0, cols)
         data = data[y0:y1, x0:x1]
 
     # Flip so row 0 becomes bottom
-    data = np.flip(data, axis=0)
+    data = data
     return np.ascontiguousarray(data).astype(np.float32)
 
 
-def normalize(data, time_steps, datatype=None):
+def normalize(data, datatype=None):
     """
     Converts input data into a 3D cube format for simulations.
 
@@ -71,6 +71,36 @@ def normalize(data, time_steps, datatype=None):
         data = data / 10.0
     if datatype == "cbh":
         data = data / 10.0
+    data = np.ascontiguousarray(data)
+    return data
 
-    data = np.flip(data, axis=0)
-    return np.repeat(data[np.newaxis, ...], time_steps, axis=0)
+
+def load_all_rasters(filename, index, raster_dir = "cropped_raster", dim = 50):
+    """
+    Load all rasters for a given x, y coordinate and filename.
+
+    Parameters
+    ----------
+    x : int
+        X coordinate (column index).
+    y : int
+        Y coordinate (row index).
+    filename : str
+        Base name of the raster files.
+    index : int
+        Index of the raster tile.
+    raster_dir : str, optional
+        Directory where the raster files are stored.
+    dim : int, optional
+        Dimension of the raster tiles (default is 50).
+
+    Returns
+    -------
+    dict: A dictionary with loaded rasters.
+    """
+    
+    rasters = {}
+    for suffix in ["slp", "asp", "dem", "cc", "cbd", "cbh", "ch", "fbfm"]:
+        name = f"{filename}/{suffix}/{filename}_{index}_{suffix}.tif"
+        rasters[suffix] = normalize(load_raster(name), suffix)
+    return rasters

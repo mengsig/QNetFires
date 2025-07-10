@@ -2,7 +2,10 @@ import networkx as nx
 import numpy as np
 
 def create_network(edgelist_path, sparse_array = False):
-    edgelist = np.loadtxt(edgelist_path)
+    if type(edgelist_path) is not str:
+        edgelist = edgelist_path
+    else:
+        edgelist = np.loadtxt(edgelist_path)
     G = nx.DiGraph()
     for u, v, w in edgelist:
         G.add_edge(int(u), int(v), weight=np.log(float(w)+1)) 

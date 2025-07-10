@@ -7,3 +7,5 @@ src/utils/__pycache__/
 src/scripts/__pycache__/
 DomiRank/
 pyretechnics/
+cropped_raster/
+rasters_raw/
