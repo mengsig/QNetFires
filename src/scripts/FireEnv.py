@@ -3,8 +3,7 @@ import matplotlib.pyplot as plt
 import gym
 from gym import spaces
 
-from Simulate import Simulate
-# └─ replace with the actual import path for your Simulate class
+from src.scripts.Simulate import Simulate
 
 class FireEnv(gym.Env):
     """
@@ -77,14 +76,8 @@ class FireEnv(gym.Env):
         num_sims = getattr(self, 'num_simulations', 100)
         max_duration = getattr(self, 'max_duration', None)
         
-        # Enable parallel fire simulations for better performance
-        self.sim._debug_parallel = True  # Enable debug output
-        self.sim.run_many_simulations(
-            num_sims, 
-            max_duration, 
-            use_parallel=True, 
-            max_workers=min(4, num_sims)
-        )
+        # Use sequential fire simulations (avoid threading overhead)
+        self.sim.run_many_simulations(num_sims, max_duration)
         obs = self.sim.get_burned()
         # cast to uint8 for the observation
         # 3) compute reward

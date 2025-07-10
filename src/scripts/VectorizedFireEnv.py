@@ -1,4 +1,4 @@
-THIS SHOULD BE A LINTER ERRORimport numpy as np
+import numpy as np
 import torch
 import multiprocessing as mp
 from multiprocessing import Process, Pipe, Queue
@@ -128,12 +128,14 @@ class VectorizedFireEnv:
                 result = env.step(action)
                 results.append(result)
         else:
-            # Parallel execution
+            # TRUE PARALLEL EXECUTION - All environments run simultaneously
+            # Each environment will also run its fire simulations in parallel
             futures = []
             for i, (env, action) in enumerate(zip(self.envs, actions)):
                 future = self.executor.submit(env.step, action)
                 futures.append(future)
             
+            # Wait for all environments to complete
             results = [future.result() for future in futures]
         
         # Unpack results

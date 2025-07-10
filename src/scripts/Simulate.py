@@ -1,7 +1,4 @@
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
-import time
 
 class Simulate:
     def __init__(self, slope, aspect, dem, cc, cbd, cbh, ch, fuel_model):
@@ -14,7 +11,6 @@ class Simulate:
         self.ch = ch
         self.fuel_model = fuel_model
         self.average_acres_burned = 0
-        self._simulation_lock = threading.Lock()  # For thread-safe operations
 
     def set_space_time_cubes(self, time_steps = None):
         from pyretechnics.space_time_cube import SpaceTimeCube
@@ -121,89 +117,30 @@ class Simulate:
         self.acres_burned = num_burned_cells 
         self.burned = self.output_matrices["fire_type"].astype(np.uint8)
 
-    def _run_single_simulation(self, ignition_point, max_duration=None):
-        """Run a single simulation and return the results."""
-        xcord, ycord = ignition_point
-        
-        if max_duration is not None:
-            self.run_simulation_with_duration(xcord, ycord, max_duration)
-        else:
-            self.run_simulation(xcord, ycord)
-            
-        return {
-            'acres_burned': self.acres_burned,
-            'burned_matrix': self.output_matrices["fire_type"].astype(np.uint8)
-        }
 
-    def run_many_simulations(self, num_simulations, max_duration=None, use_parallel=True, max_workers=None):
+
+    def run_many_simulations(self, num_simulations, max_duration=None):
         """
         Run multiple fire simulations with random ignition points.
         
         Args:
             num_simulations: Number of simulations to run
             max_duration: Maximum duration for each simulation (minutes)
-            use_parallel: Whether to run simulations in parallel (default: True)
-            max_workers: Maximum number of parallel workers (default: min(4, num_simulations))
         """
-        start_time = time.time()
-        
-        # Generate random ignition points
-        ignition_points = []
-        for _ in range(num_simulations):
+        for i in range(num_simulations):
             xcord = np.random.randint(0, self.slope.shape[0])
             ycord = np.random.randint(0, self.slope.shape[1])
-            ignition_points.append((xcord, ycord))
-        
-        if use_parallel and num_simulations > 1:
-            # Parallel execution
-            max_workers = max_workers or min(4, num_simulations)
             
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Submit all simulation tasks
-                futures = []
-                for ignition_point in ignition_points:
-                    future = executor.submit(self._run_single_simulation, ignition_point, max_duration)
-                    futures.append(future)
+            if max_duration is not None:
+                self.run_simulation_with_duration(xcord, ycord, max_duration)
+            else:
+                self.run_simulation(xcord, ycord)
                 
-                # Collect results
-                results = []
-                for future in as_completed(futures):
-                    result = future.result()
-                    results.append(result)
-                
-                # Aggregate results
-                self.average_acres_burned = 0
-                for i, result in enumerate(results):
-                    if i == 0:
-                        self.burned = result['burned_matrix']
-                    else:
-                        self.burned += result['burned_matrix']
-                    self.average_acres_burned += result['acres_burned']
-        else:
-            # Sequential execution (original method)
-            for i, ignition_point in enumerate(ignition_points):
-                xcord, ycord = ignition_point
-                
-                if max_duration is not None:
-                    self.run_simulation_with_duration(xcord, ycord, max_duration)
-                else:
-                    self.run_simulation(xcord, ycord)
-                    
-                if i == 0:
-                    self.burned = self.output_matrices["fire_type"].astype(np.uint8)
-                else:
-                    self.burned += self.output_matrices["fire_type"].astype(np.uint8)
-                self.average_acres_burned += self.acres_burned
-        
-        simulation_time = time.time() - start_time
-        
-        # Store final average
-        self.acres_burned = self.average_acres_burned
-        
-        # Debug output
-        if hasattr(self, '_debug_parallel') and self._debug_parallel:
-            print(f"      Fire simulations: {num_simulations} sims in {simulation_time:.2f}s "
-                  f"({'parallel' if use_parallel and num_simulations > 1 else 'sequential'})")
+            if i == 0:
+                self.burned = self.output_matrices["fire_type"].astype(np.uint8)
+            else:
+                self.burned += self.output_matrices["fire_type"].astype(np.uint8)
+            self.average_acres_burned += self.acres_burned
             
     def run_simulation_with_duration(self, xcord, ycord, max_duration_minutes):
         """Run simulation with specified maximum duration."""

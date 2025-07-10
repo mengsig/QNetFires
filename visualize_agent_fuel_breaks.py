@@ -25,7 +25,9 @@ import time
 # Add src to path for imports
 script_dir = os.path.dirname(__file__)
 project_root = os.path.abspath(os.path.join(script_dir, '.'))
+src_path = os.path.join(project_root, 'src')
 sys.path.insert(0, project_root)
+sys.path.insert(0, src_path)
 
 try:
     from src.scripts.DQNAgent import DQNAgent
