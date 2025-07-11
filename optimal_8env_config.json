@@ -1,0 +1,41 @@
+{
+  "raster_dir": "cropped_raster",
+  "grid_size": 50,
+  "input_channels": 12,
+  "num_landscapes": 8,
+  
+  "num_episodes": 200,
+  "num_parallel_envs": 8,
+  "parallel_method": "multiprocessing",
+  "max_workers": 8,
+  "steps_per_episode": 25,
+  "train_frequency": 4,
+  "collection_batch_size": 32,
+  "experience_buffer_size": 1000,
+  
+  "memory_simulations": 75,
+  "pretrain_steps": 100,
+  "percentage_increment": 2,
+  "fire_simulation_max_duration": 45,
+  
+  "learning_rate": 1e-4,
+  "gamma": 0.95,
+  "initial_epsilon": 1.0,
+  "epsilon_min": 0.01,
+  "epsilon_decay": 0.99,
+  "buffer_size": 20000,
+  "batch_size": 32,
+  
+  "target_update_frequency": 10,
+  "checkpoint_frequency": 10,
+  
+  "output_dir": "optimal_8env_outputs",
+  "regenerate_memories": true,
+  
+  "_comment": "OPTIMAL 2:1 RATIO CONFIGURATION:",
+  "_comment2": "- 8 environments : 4 CPU cores (2:1 ratio)",
+  "_comment3": "- Each environment runs 75 simulations sequentially",
+  "_comment4": "- Optimized for load balancing and CPU utilization",
+  "_comment5": "- Reduced steps_per_episode for faster iteration",
+  "_comment6": "- Expected: 70-90% CPU usage, 15-25 experiences/sec"
+}

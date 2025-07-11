@@ -1,0 +1,40 @@
+{
+  "raster_dir": "cropped_raster",
+  "grid_size": 50,
+  "input_channels": 12,
+  "num_landscapes": 8,
+  
+  "num_episodes": 50,
+  "num_parallel_envs": 8,
+  "parallel_method": "multiprocessing",
+  "max_workers": 8,
+  "steps_per_episode": 20,
+  "train_frequency": 4,
+  "collection_batch_size": 32,
+  "experience_buffer_size": 1000,
+  
+  "memory_simulations": 50,
+  "pretrain_steps": 50,
+  "percentage_increment": 2,
+  "fire_simulation_max_duration": 30,
+  
+  "learning_rate": 1e-4,
+  "gamma": 0.95,
+  "initial_epsilon": 1.0,
+  "epsilon_min": 0.01,
+  "epsilon_decay": 0.99,
+  "buffer_size": 20000,
+  "batch_size": 32,
+  
+  "target_update_frequency": 10,
+  "checkpoint_frequency": 10,
+  
+  "output_dir": "ratio_test_outputs",
+  "regenerate_memories": true,
+  
+  "_comment": "RATIO TESTING CONFIGURATION:",
+  "_comment2": "- Designed for quick testing of different ratios",
+  "_comment3": "- Reduced episodes and steps for faster iteration",
+  "_comment4": "- Change num_parallel_envs to test: 4, 8, 12, 16",
+  "_comment5": "- Monitor: experiences/sec, CPU utilization, memory usage"
+}

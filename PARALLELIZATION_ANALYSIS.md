@@ -184,14 +184,36 @@ vec_env = VectorizedFireEnv(
 - ❌ High context switching overhead
 - ❌ Reduced experiences per second despite high CPU usage
 
+## Optimal Environment-to-Core Ratios
+
+### **Testing Framework**
+Run the automated ratio testing script:
+```bash
+python3 test_environment_ratios.py
+```
+
+### **Expected Optimal Ratios**
+
+| System | Cores | Recommended Ratio | Environments | Reasoning |
+|--------|-------|-------------------|--------------|-----------|
+| Standard | 4 | **2:1** | **8** | Best balance of load balancing and overhead |
+| High-end | 8 | **2:1** | **16** | Optimal for most CPU-intensive workloads |
+| Workstation | 16+ | **1.5:1** | **24+** | Avoid excessive context switching |
+
+### **Why 2:1 is Often Optimal**
+- **Load balancing**: Better distribution of work
+- **CPU micro-pauses**: Covers memory access delays
+- **Training diversity**: More varied experiences
+- **Fault tolerance**: Better resilience to individual failures
+
 ## Next Steps
 
-1. **Test the improvements**: Run `test_parallel_performance.py`
+1. **Test optimal ratios**: Run `test_environment_ratios.py`
 2. **Monitor CPU during training**: Use `htop` while training
 3. **Adjust configuration**: Fine-tune based on your system specifications
-4. **Scale up**: Use `workstation_config.json` for systems with more cores
+4. **Use empirical results**: Let the data guide your configuration
 
-The key insight is that **fire simulations are CPU-intensive and highly parallelizable**. By running them in parallel within each environment, we can achieve much better CPU utilization and significantly faster training times.
+The key insight is that **optimal parallelization depends on your specific hardware and workload**. Testing different ratios empirically will give you the best performance for your system.
 
 ---
 
