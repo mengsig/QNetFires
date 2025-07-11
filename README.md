@@ -1,75 +1,186 @@
-# Installation
+# FireBreak Q-Network (QNetFires) 🔥
 
-If you are using **arch** linux, you can install directly via the command:
+A sophisticated deep reinforcement learning system for optimizing fuel break placement in wildfire management. This project uses Deep Q-Networks (DQN) to learn optimal fuel break strategies by analyzing landscape characteristics and fire behavior patterns.
 
-```
+## Overview
+
+QNetFires combines landscape analysis, fire behavior modeling, and deep reinforcement learning to intelligently place fuel breaks that minimize wildfire damage. The system analyzes 12 different landscape and fire behavior channels to make informed decisions about where to place fuel breaks for maximum effectiveness.
+
+## Key Features
+
+- **Deep Q-Network Architecture**: State-of-the-art CNN with residual blocks and attention mechanisms
+- **Comprehensive Landscape Analysis**: 12-channel input including traditional landscape features and directional fireline intensity data
+- **Parallel Training**: Vectorized environments for efficient training across multiple landscapes
+- **DomiRank Integration**: Expert demonstrations from network-based centrality analysis
+- **Fire Behavior Modeling**: Integration with pyretechnics for realistic fire simulation
+- **Visualization Tools**: Comprehensive plotting and analysis capabilities
+
+## Input Channels (12 Total)
+
+The system analyzes 12 different landscape and fire behavior characteristics:
+
+### Traditional Landscape Features (8 channels):
+1. **Slope (slp)**: Terrain slope in degrees
+2. **Aspect (asp)**: Terrain aspect (compass direction)
+3. **Elevation (dem)**: Digital elevation model
+4. **Canopy Cover (cc)**: Percentage of tree canopy coverage
+5. **Canopy Bulk Density (cbd)**: Density of canopy material
+6. **Canopy Base Height (cbh)**: Height of the tree canopy base
+7. **Canopy Height (ch)**: Total height of the tree canopy
+8. **Fuel Model (fbfm)**: Fire behavior fuel model classification
+
+### Fireline Intensity Features (4 channels):
+9. **North Fireline Intensity**: Fire intensity spreading northward
+10. **East Fireline Intensity**: Fire intensity spreading eastward
+11. **South Fireline Intensity**: Fire intensity spreading southward
+12. **West Fireline Intensity**: Fire intensity spreading westward
+
+These fireline intensity channels provide crucial information about fire behavior in different directions, enabling more precise fuel break placement.
+
+## Installation
+
+### Quick Install (Arch Linux)
+```bash
 bash install.sh
 ```
 
-Otherwise, on any **OS** you can install by first ensuring that you are using
-python version **~Python3.10**. Thereafter, execute the following commands:
+### Manual Installation (All Systems)
+Ensure you have **Python 3.10** installed, then:
 
-```
+```bash
 git clone git@github.com:pyregence/pyretechnics.git
 git clone git@github.com:mengsig/DomiRank.git
 python -m venv qnetfires
 source qnetfires/bin/activate
 pip install -e DomiRank/.
 pip install -r requirements.txt
-cd pyregence
+cd pyretechnics
 python setup.py install
 cd ..
 ```
 
-# Running Simulations and Creating Fire Breaks
-The ```run.sh``` script creates an easy script that will run all of 
-the required files in the correct order, by passing consistent argument
-types. Moreover, it does this for a list of specified centralities.
-To change the size of the lanscape, please navigate to run.sh and change
-the variables ```XLEN``` and ```YLEN``` to your desired size. Thereafter,
-a savename should be given that will store all results in *src/results/<savename>*.
-Once this is done, simply run:
+## Usage
 
-```
+### Quick Start
+The `run.sh` script provides an easy way to run complete training pipelines:
+
+```bash
 bash run.sh
 ```
 
-And all information should be stored in the *src/results/<savename>/* folder.
+### Configuration
 
-Enjoy (:
+Edit the key parameters in `parallel_config.json`:
 
-# Config Parameter Guide:
-  "raster_dir": "cropped_raster", # Directory containing raster images
-  "grid_size": 50, # Size of the grid for the environment
-  "input_channels": 8, # Number of input channels for the neural network
-  "num_landscapes": 8, # Number of different landscapes to train on
-  
-  "num_episodes": 200, # Total number of episodes to run (epochs)
-  "num_parallel_envs": 8, # Number of parallel environments to run -- should be less than or equal to the num_landscapes
-  "parallel_method": "threading", # Method for parallel execution (can be 'threading' or 'multiprocessing')
-  "max_workers": 8, # Maximum number of workers for parallel execution
-  "steps_per_episode": 100, # Number of fire-simulations  per episode (increases comp time but increases stability of reward).
-  "train_frequency": 2,
-  "collection_batch_size": 64, # Batch size for collecting experiences
-  "experience_buffer_size": 1000, # Size of the experience buffer for storing transitions
-  
-  "memory_simulations": 100, # Number of simulations to run for memory generation
-  "pretrain_steps": 100, # Number of steps to pretrain the model before starting the main training loop
-  "percentage_increment": 2, # do not touch
-  "fire_simulation_max_duration": 120, # Maximum duration of a fire simulation in hours
-  
+```json
+{
+  "raster_dir": "cropped_raster",
+  "grid_size": 50,
+  "input_channels": 12,
+  "num_landscapes": 8,
+  "num_episodes": 200,
+  "num_parallel_envs": 8,
   "learning_rate": 1e-4,
-  "gamma": 0.95,
-  "initial_epsilon": 1.0,
-  "epsilon_min": 0.01,
-  "epsilon_decay": 0.99,
-  "buffer_size": 20000, # Size of the experience replay buffer
-  "batch_size": 32, # Batch size for training the model
-  
-  "target_update_frequency": 10,
-  "checkpoint_frequency": 10,
-  
-  "output_dir": "parallel_outputs",
-  "regenerate_memories": true
+  "batch_size": 32
 }
+```
+
+### Training Pipeline
+
+1. **Generate Landscape Data**: Create or load landscape raster data
+2. **Compute Adjacency**: Run `CreateAdjacency.py` to generate fireline intensity data
+3. **Train Agent**: Use parallel training with `train_dqn_fuel_breaks_parallel.py`
+4. **Visualize Results**: View results with `visualize_agent_fuel_breaks.py`
+
+## Architecture
+
+### DQN Network
+- **Input**: 12-channel landscape tensor (batch_size, 12, height, width)
+- **Architecture**: CNN with residual blocks and spatial attention
+- **Output**: Q-values for each spatial location (fuel break placement)
+
+### Training Process
+1. **Experience Collection**: Parallel environments generate diverse experiences
+2. **Expert Demonstrations**: DomiRank provides high-quality initial experiences
+3. **Iterative Learning**: Agent learns from both exploration and expert guidance
+4. **Reward Signal**: Based on fire damage reduction from fuel breaks
+
+## Key Components
+
+### Core Scripts
+- `CreateAdjacency.py`: Generates fireline intensity data for all directions
+- `DQNAgent.py`: Deep Q-Network implementation with modern architecture
+- `VectorizedFireEnv.py`: Parallel environment wrapper for efficient training
+- `train_dqn_fuel_breaks_parallel.py`: Main training loop with parallel execution
+
+### Utilities
+- `loadingUtils.py`: Landscape and fireline data loading
+- `DomiRankMemoryLoader.py`: Expert demonstration generation
+- `FireEnv.py`: Single environment wrapper
+- `Simulate.py`: Fire behavior simulation
+
+## Configuration Guide
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `input_channels` | Number of input channels (landscape + fireline) | 12 |
+| `grid_size` | Spatial resolution of landscape grid | 50 |
+| `num_landscapes` | Number of different landscapes for training | 8 |
+| `num_episodes` | Total training episodes | 200 |
+| `num_parallel_envs` | Parallel environments (≤ num_landscapes) | 8 |
+| `learning_rate` | DQN learning rate | 1e-4 |
+| `batch_size` | Training batch size | 32 |
+| `experience_buffer_size` | Experience replay buffer size | 1000 |
+| `steps_per_episode` | Fire simulations per episode | 100 |
+
+## Data Structure
+
+```
+cropped_raster/
+├── slp/           # Slope data
+├── asp/           # Aspect data
+├── dem/           # Elevation data
+├── cc/            # Canopy cover data
+├── cbd/           # Canopy bulk density data
+├── cbh/           # Canopy base height data
+├── ch/            # Canopy height data
+├── fbfm/          # Fuel model data
+├── fireline/      # Fireline intensity data
+│   ├── fireline_north_{k}.txt
+│   ├── fireline_east_{k}.txt
+│   ├── fireline_south_{k}.txt
+│   └── fireline_west_{k}.txt
+└── domirank/      # DomiRank centrality data
+    └── domirank_{k}.txt
+```
+
+## Performance Features
+
+- **GPU Acceleration**: Automatic CUDA detection and optimization
+- **Parallel Training**: Multi-environment vectorized execution
+- **Memory Management**: Efficient experience replay and buffer management
+- **Gradient Clipping**: Stable training with gradient normalization
+
+## Research Applications
+
+This system is designed for:
+- **Wildfire Management**: Optimal fuel break placement strategies
+- **Landscape Planning**: Fire risk assessment and mitigation
+- **Emergency Response**: Rapid fuel break deployment planning
+- **Research**: Fire behavior modeling and landscape analysis
+
+## Contributing
+
+This project integrates multiple advanced techniques:
+- Deep reinforcement learning (DQN)
+- Fire behavior modeling (pyretechnics)
+- Network analysis (DomiRank)
+- Parallel computing
+- Landscape analysis
+
+Results are saved in `src/results/<experiment_name>/` for analysis and comparison.
+
+## License
+
+This project combines multiple open-source components. Please refer to individual component licenses for details.
 

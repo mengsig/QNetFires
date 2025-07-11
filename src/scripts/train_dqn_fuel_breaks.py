@@ -426,7 +426,7 @@ def get_default_config():
         # Environment settings
         'raster_dir': 'cropped_raster',
         'grid_size': 50,
-        'input_channels': 8,
+        'input_channels': 12,
         'num_landscapes': 5,
         
         # Training settings

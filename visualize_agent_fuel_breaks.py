@@ -104,7 +104,7 @@ class FuelBreakVisualizer:
         """Get default configuration for visualization."""
         return {
             'grid_size': 50,
-            'input_channels': 8,
+            'input_channels': 12,
             'raster_dir': 'cropped_raster',
             'max_fuel_breaks': 30,
             'fire_simulation_steps': 3,  # For validation (reduced for speed)

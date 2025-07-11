@@ -1,7 +1,7 @@
 {
   "raster_dir": "cropped_raster",
   "grid_size": 50,
-  "input_channels": 8,
+  "input_channels": 12,
   "num_landscapes": 8,
   
   "num_episodes": 200,

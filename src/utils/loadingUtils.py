@@ -64,12 +64,19 @@ def normalize(data, datatype=None):
         data = data / 100.0
     elif datatype == "fbfm":
         data = data.astype(np.int32)
-    if datatype == "slp":
+    elif datatype == "slp":
         data = np.tan(np.pi / 180 * data)
-    if datatype == "ch":
+    elif datatype == "ch":
         data = data / 10.0
-    if datatype == "cbh":
+    elif datatype == "cbh":
         data = data / 10.0
+    elif datatype == "fireline":
+        # Normalize fireline intensity data (typically in BTU/ft/s)
+        # Apply log scaling for better numerical stability
+        data = np.log1p(data)  # log(1 + x) to handle zeros
+        # Scale to reasonable range [0, 1] 
+        if data.max() > 0:
+            data = data / data.max()
     data = np.ascontiguousarray(data)
     return data
 
@@ -99,7 +106,21 @@ def load_all_rasters(filename, index, raster_dir = "cropped_raster", dim = 50):
     """
     
     rasters = {}
+    # Load standard raster files
     for suffix in ["slp", "asp", "dem", "cc", "cbd", "cbh", "ch", "fbfm"]:
         name = f"{filename}/{suffix}/{filename}_{index}_{suffix}.tif"
         rasters[suffix] = normalize(load_raster(name), suffix)
+    
+    # Load fireline intensity files
+    fireline_dir = f"{filename}/fireline"
+    for direction in ["north", "east", "south", "west"]:
+        fireline_file = f"{fireline_dir}/fireline_{direction}_{index}.txt"
+        try:
+            fireline_data = np.loadtxt(fireline_file)
+            # Normalize fireline intensity data
+            rasters[f'fireline_{direction}'] = normalize(fireline_data, 'fireline')
+        except FileNotFoundError:
+            print(f"Warning: Fireline file {fireline_file} not found. Creating zero array.")
+            rasters[f'fireline_{direction}'] = np.zeros((dim, dim), dtype=np.float32)
+    
     return rasters

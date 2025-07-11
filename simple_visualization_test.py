@@ -49,8 +49,8 @@ def test_visualization():
         
         # Test agent
         print("🧠 Testing agent...")
-        agent = DQNAgent(
-            input_channels=8,
+            agent = DQNAgent(
+        input_channels=12,
             grid_size=25,
             batch_size=4
         )

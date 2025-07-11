@@ -24,7 +24,7 @@ class DQNNetwork(nn.Module):
     attention mechanisms for improved performance.
     """
     
-    def __init__(self, input_channels=8, grid_size=50, action_dim=None):
+    def __init__(self, input_channels=12, grid_size=50, action_dim=None):
         super(DQNNetwork, self).__init__()
         
         self.input_channels = input_channels
@@ -211,7 +211,7 @@ class DQNAgent:
     learning from domirank-based expert demonstrations.
     """
     
-    def __init__(self, input_channels=8, grid_size=50, 
+    def __init__(self, input_channels=12, grid_size=50, 
                  learning_rate=1e-4, gamma=0.95, epsilon=1.0, 
                  epsilon_min=0.01, epsilon_decay=0.995,
                  buffer_size=100000, batch_size=32):
@@ -270,9 +270,10 @@ class DQNAgent:
         Returns:
             Preprocessed tensor ready for network input
         """
-        # Stack all landscape layers
+        # Stack all landscape layers including fireline intensities
         layers = []
-        layer_names = ['slp', 'asp', 'dem', 'cc', 'cbd', 'cbh', 'ch', 'fbfm']
+        layer_names = ['slp', 'asp', 'dem', 'cc', 'cbd', 'cbh', 'ch', 'fbfm', 
+                      'fireline_north', 'fireline_east', 'fireline_south', 'fireline_west']
         
         for name in layer_names:
             if name in landscape_data:

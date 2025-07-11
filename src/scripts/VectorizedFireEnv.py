@@ -456,7 +456,7 @@ if __name__ == "__main__":
         print(f"Dones: {dones}")
         
         # Test with agent
-        agent = DQNAgent(input_channels=8, grid_size=25, batch_size=4)
+        agent = DQNAgent(input_channels=12, grid_size=25, batch_size=4)
         collector = ParallelExperienceCollector(vec_env, agent, collection_batch_size=8)
         
         print("Testing experience collection...")
