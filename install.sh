@@ -101,11 +101,11 @@ if [ ! -x "$FILENAME_ENV" ]; then
 fi
 
 echo "Downloading necessary .tif files..."
-python src/scripts/download.py
+python src/scripts/Download.py
 echo "Finished downloading .tif files!"
 
 echo "Creating DomiRank Fuel-Breaks necessary for pre-training..."
-python src/scripts/create_fuel_breaks.py
+python src/scripts/CreateAdjacency.py.py
 echo "Finished creating DomiRank Fuel-Breaks!"
 
 echo "To activate the virtual environment at any time, run the command:
