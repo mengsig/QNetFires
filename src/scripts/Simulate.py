@@ -1,4 +1,8 @@
 import numpy as np
+from multiprocessing import Pool, cpu_count
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import time
+import os
 
 class Simulate:
     def __init__(self, slope, aspect, dem, cc, cbd, cbh, ch, fuel_model):
@@ -11,6 +15,12 @@ class Simulate:
         self.ch = ch
         self.fuel_model = fuel_model
         self.average_acres_burned = 0
+        
+        # Parallel processing configuration
+        self.max_workers_per_env = max(1, cpu_count() // 4)  # Reserve cores for environment-level parallelism
+        self.use_parallel_simulations = True
+        
+        print(f"🔥 Simulate initialized with {self.max_workers_per_env} workers per environment")
 
     def set_space_time_cubes(self, time_steps = None):
         from pyretechnics.space_time_cube import SpaceTimeCube
@@ -117,31 +127,111 @@ class Simulate:
         self.acres_burned = num_burned_cells 
         self.burned = self.output_matrices["fire_type"].astype(np.uint8)
 
-
-
     def run_many_simulations(self, num_simulations, max_duration=None):
         """
         Run multiple fire simulations with random ignition points.
+        Now with parallel processing for better CPU utilization.
         
         Args:
             num_simulations: Number of simulations to run
             max_duration: Maximum duration for each simulation (minutes)
         """
-        for i in range(num_simulations):
-            xcord = np.random.randint(0, self.slope.shape[0])
-            ycord = np.random.randint(0, self.slope.shape[1])
+        start_time = time.time()
+        
+        # Generate random ignition points
+        ignition_points = [
+            (np.random.randint(0, self.slope.shape[0]), np.random.randint(0, self.slope.shape[1]))
+            for _ in range(num_simulations)
+        ]
+        
+        if self.use_parallel_simulations and num_simulations > 1:
+            # PARALLEL EXECUTION - Run simulations in parallel
+            burned_matrices = []
+            total_acres_burned = 0
             
-            if max_duration is not None:
-                self.run_simulation_with_duration(xcord, ycord, max_duration)
-            else:
-                self.run_simulation(xcord, ycord)
+            # Use ProcessPoolExecutor for CPU-intensive tasks
+            with ProcessPoolExecutor(max_workers=self.max_workers_per_env) as executor:
+                # Submit all simulations
+                future_to_point = {}
+                for i, (xcord, ycord) in enumerate(ignition_points):
+                    future = executor.submit(
+                        _run_single_simulation_worker,
+                        self._get_simulation_params(),
+                        xcord, ycord, max_duration
+                    )
+                    future_to_point[future] = (i, xcord, ycord)
                 
-            if i == 0:
-                self.burned = self.output_matrices["fire_type"].astype(np.uint8)
-            else:
-                self.burned += self.output_matrices["fire_type"].astype(np.uint8)
-            self.average_acres_burned += self.acres_burned
+                # Collect results as they complete
+                for future in as_completed(future_to_point):
+                    i, xcord, ycord = future_to_point[future]
+                    try:
+                        result = future.result()
+                        burned_matrices.append(result['burned_matrix'])
+                        total_acres_burned += result['acres_burned']
+                    except Exception as e:
+                        print(f"Simulation {i} failed: {e}")
+                        # Create empty result for failed simulation
+                        burned_matrices.append(np.zeros_like(self.slope, dtype=np.uint8))
             
+            # Combine results
+            if burned_matrices:
+                self.burned = burned_matrices[0]
+                for burned_matrix in burned_matrices[1:]:
+                    self.burned += burned_matrix
+                self.average_acres_burned = total_acres_burned
+            else:
+                self.burned = np.zeros_like(self.slope, dtype=np.uint8)
+                self.average_acres_burned = 0
+                
+        else:
+            # SEQUENTIAL EXECUTION - Fallback for single simulation or disabled parallelism
+            for i, (xcord, ycord) in enumerate(ignition_points):
+                if max_duration is not None:
+                    self.run_simulation_with_duration(xcord, ycord, max_duration)
+                else:
+                    self.run_simulation(xcord, ycord)
+                    
+                if i == 0:
+                    self.burned = self.output_matrices["fire_type"].astype(np.uint8)
+                else:
+                    self.burned += self.output_matrices["fire_type"].astype(np.uint8)
+                self.average_acres_burned += self.acres_burned
+        
+        elapsed_time = time.time() - start_time
+        if elapsed_time > 1.0:  # Only print for slow simulations
+            print(f"   🔥 Completed {num_simulations} simulations in {elapsed_time:.2f}s "
+                  f"({num_simulations/elapsed_time:.1f} sims/sec)")
+    
+    def _get_simulation_params(self):
+        """Get parameters needed for worker processes."""
+        return {
+            'slope': self.slope,
+            'aspect': self.aspect,
+            'dem': self.dem,
+            'cc': self.cc,
+            'cbd': self.cbd,
+            'cbh': self.cbh,
+            'ch': self.ch,
+            'fuel_model': self.fuel_model.copy(),  # Copy to avoid race conditions
+            'cube_shape': self.cube_shape,
+            'fuel_breaks': self.fuel_breaks
+        }
+    
+    def set_parallel_simulations(self, enabled: bool, max_workers: int = None):
+        """
+        Enable/disable parallel simulations and set worker count.
+        
+        Args:
+            enabled: Whether to use parallel simulations
+            max_workers: Maximum number of worker processes (None for auto)
+        """
+        self.use_parallel_simulations = enabled
+        if max_workers is not None:
+            self.max_workers_per_env = max_workers
+        
+        print(f"🔥 Parallel simulations {'enabled' if enabled else 'disabled'}, "
+              f"max_workers: {self.max_workers_per_env}")
+                
     def run_simulation_with_duration(self, xcord, ycord, max_duration_minutes):
         """Run simulation with specified maximum duration."""
         import pyretechnics.eulerian_level_set as els
@@ -182,3 +272,75 @@ class Simulate:
             return self.acres_burned 
         else:
             return self.average_acres_burned
+
+
+def _run_single_simulation_worker(params, xcord, ycord, max_duration=None):
+    """
+    Worker function for parallel simulation execution.
+    This runs in a separate process.
+    """
+    import pyretechnics.eulerian_level_set as els
+    from pyretechnics.space_time_cube import SpaceTimeCube
+    
+    # Recreate space-time cubes in worker process
+    slope_f32 = params['slope'].astype(np.float32)
+    aspect_f32 = params['aspect'].astype(np.float32)
+    fuel_model_f32 = params['fuel_model'].astype(np.float32)
+    cc_f32 = params['cc'].astype(np.float32)
+    ch_f32 = params['ch'].astype(np.float32)
+    cbh_f32 = params['cbh'].astype(np.float32)
+    cbd_f32 = params['cbd'].astype(np.float32)
+    
+    # Apply fuel breaks if present
+    if params['fuel_breaks'] is not None:
+        fuel_model_f32[params['fuel_breaks']] = 91  # Set fuel model to 91 (non-burnable)
+    
+    cube_shape = params['cube_shape']
+    space_time_cubes = {
+        "slope"                        : SpaceTimeCube(cube_shape, slope_f32),
+        "aspect"                       : SpaceTimeCube(cube_shape, aspect_f32),
+        "fuel_model"                   : SpaceTimeCube(cube_shape, fuel_model_f32),
+        "canopy_cover"                 : SpaceTimeCube(cube_shape, cc_f32),
+        "canopy_height"                : SpaceTimeCube(cube_shape, ch_f32),
+        "canopy_base_height"           : SpaceTimeCube(cube_shape, cbh_f32),
+        "canopy_bulk_density"          : SpaceTimeCube(cube_shape, cbd_f32),
+        "wind_speed_10m"               : SpaceTimeCube(cube_shape, np.float32(0)),
+        "upwind_direction"             : SpaceTimeCube(cube_shape, np.float32(0)),
+        "fuel_moisture_dead_1hr"       : SpaceTimeCube(cube_shape, np.float32(0.05)),
+        "fuel_moisture_dead_10hr"      : SpaceTimeCube(cube_shape, np.float32(0.10)),
+        "fuel_moisture_dead_100hr"     : SpaceTimeCube(cube_shape, np.float32(0.25)),
+        "fuel_moisture_live_herbaceous": SpaceTimeCube(cube_shape, np.float32(0.90)),
+        "fuel_moisture_live_woody"     : SpaceTimeCube(cube_shape, np.float32(0.60)),
+        "foliar_moisture"              : SpaceTimeCube(cube_shape, np.float32(0.90)),
+        "fuel_spread_adjustment"       : SpaceTimeCube(cube_shape, np.float32(1.0)),
+        "weather_spread_adjustment"    : SpaceTimeCube(cube_shape, np.float32(1.0)),
+    }
+    
+    # Run simulation
+    spread_state = els.SpreadState(cube_shape).ignite_cell((xcord, ycord))
+    cube_resolution = (60, 30, 30)  # minutes, meters, meters
+    
+    if max_duration is not None:
+        sim_max_duration = max_duration
+    else:
+        sim_max_duration = int((cube_shape[0] * 2 / 3) * 60)
+    
+    fire_spread_results = els.spread_fire_with_phi_field(
+        space_time_cubes,
+        spread_state,
+        cube_resolution,
+        0,
+        sim_max_duration,
+        surface_lw_ratio_model="behave"
+    )
+    
+    spread_state = fire_spread_results["spread_state"]
+    output_matrices = spread_state.get_full_matrices()
+    
+    num_burned_cells = np.count_nonzero(output_matrices["fire_type"])
+    burned_matrix = output_matrices["fire_type"].astype(np.uint8)
+    
+    return {
+        'burned_matrix': burned_matrix,
+        'acres_burned': num_burned_cells
+    }

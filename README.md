@@ -69,7 +69,11 @@ cd ..
 To run the training pipeline, execute the following command:
 
 ```bash
-python src/train_dqn_fuel_breaks_parallel.py --config parallel_config.json
+# Standard configuration (optimized for 4 CPU cores)
+python3 src/scripts/train_dqn_fuel_breaks_parallel.py --config parallel_config.json
+
+# High-performance configuration (for 8+ CPU cores)
+python3 src/scripts/train_dqn_fuel_breaks_parallel.py --config workstation_config.json
 ```
 
 ### Configuration
@@ -83,7 +87,10 @@ Edit the key parameters in `parallel_config.json`:
   "input_channels": 12,
   "num_landscapes": 8,
   "num_episodes": 200,
-  "num_parallel_envs": 8,
+  "num_parallel_envs": 4,
+  "parallel_method": "multiprocessing",
+  "memory_simulations": 50,
+  "fire_simulation_max_duration": 60,
   "learning_rate": 1e-4,
   "batch_size": 32
 }
@@ -160,8 +167,11 @@ cropped_raster/
 
 ## Performance Features
 
+- **Nested Parallelization**: Multi-level parallel execution for maximum CPU utilization
+  - Environment-level parallelism: Multiple environments run simultaneously
+  - Simulation-level parallelism: Fire simulations within each environment run in parallel
 - **GPU Acceleration**: Automatic CUDA detection and optimization
-- **Parallel Training**: Multi-environment vectorized execution
+- **Parallel Training**: Multi-environment vectorized execution with multiprocessing
 - **Memory Management**: Efficient experience replay and buffer management
 - **Gradient Clipping**: Stable training with gradient normalization
 
@@ -173,13 +183,32 @@ This system is designed for:
 - **Emergency Response**: Rapid fuel break deployment planning
 - **Research**: Fire behavior modeling and landscape analysis
 
+## Performance Testing
+
+Test the parallel performance improvements:
+
+```bash
+# Test parallel vs sequential fire simulation performance
+python3 test_parallel_performance.py
+
+# Monitor CPU utilization during intensive simulations
+python3 test_parallel_performance.py --cpu-test
+```
+
+### Expected Performance Improvements:
+- **2-4x speedup** for fire simulations
+- **70-90% CPU utilization** (vs 10-20% before)
+- **Significantly faster training** on multi-core systems
+
+See [`PARALLELIZATION_ANALYSIS.md`](PARALLELIZATION_ANALYSIS.md) for detailed performance analysis.
+
 ## Contributing
 
 This project integrates multiple advanced techniques:
 - Deep reinforcement learning (DQN)
 - Fire behavior modeling (pyretechnics)
 - Network analysis (DomiRank)
-- Parallel computing
+- Nested parallel computing
 - Landscape analysis
 
 Results are saved in `src/results/<experiment_name>/` for analysis and comparison.
