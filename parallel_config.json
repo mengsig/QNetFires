@@ -5,9 +5,9 @@
   "num_landscapes": 8,
   
   "num_episodes": 200,
-  "num_parallel_envs": 4,
+  "num_parallel_envs": 8,
   "parallel_method": "multiprocessing",
-  "max_workers": 4,
+  "max_workers": 8,
   "steps_per_episode": 50,
   "train_frequency": 4,
   "collection_batch_size": 32,
@@ -32,8 +32,8 @@
   "output_dir": "parallel_outputs",
   "regenerate_memories": true,
   
-  "_comment": "Optimized for 4-core CPU with nested parallelization:",
-  "_comment2": "- 4 environments (multiprocessing) use all cores",
+  "_comment": "Optimized for 8-core CPU with nested parallelization:",
+  "_comment2": "- 8 environments (multiprocessing) use all cores",
   "_comment3": "- Each environment runs 50 fire simulations in parallel",
   "_comment4": "- Reduced simulation count per environment for faster iteration",
   "_comment5": "- Shorter max_duration for faster individual simulations"
