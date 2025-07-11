@@ -6,7 +6,7 @@ if [ ! -x "$0" ]; then
     exit 0
 fi
 
-if [ "$1" == "--ArchBtw" ]; then
+if [ "$1" == "--IUseArchBtw" ]; then
     echo "Installing on Arch Linux..."
     echo "→ Installing base-devel, Python 3.10, and virtualenv"
     sudo pacman -Syu --needed --noconfirm \

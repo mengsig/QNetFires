@@ -43,6 +43,9 @@ class DomiRankMemoryLoader:
         landscape_types = ['slp', 'asp', 'dem', 'cc', 'cbd', 'cbh', 'ch', 'fbfm']
         for landscape_type in landscape_types:
             os.makedirs(os.path.join(self.raster_dir, landscape_type), exist_ok=True)
+        
+        # Create fireline directory for fireline intensity data
+        os.makedirs(os.path.join(self.raster_dir, "fireline"), exist_ok=True)
     
     def generate_sample_data(self, num_landscapes=5):
         """
@@ -84,6 +87,13 @@ class DomiRankMemoryLoader:
             domirank_values = self._generate_domirank_values(landscape_data)
             domirank_filepath = os.path.join(self.domirank_dir, f"domirank_{i}.txt")
             np.savetxt(domirank_filepath, domirank_values)
+            
+            # Generate fireline intensity data for each direction
+            fireline_dir = os.path.join(self.raster_dir, "fireline")
+            for direction in ["north", "east", "south", "west"]:
+                fireline_data = self._generate_fireline_data(landscape_data, direction)
+                fireline_filepath = os.path.join(fireline_dir, f"fireline_{direction}_{i}.txt")
+                np.savetxt(fireline_filepath, fireline_data)
             
             print(f"Generated landscape {i}")
     
@@ -134,6 +144,42 @@ class DomiRankMemoryLoader:
         
         return domirank.flatten()
     
+    def _generate_fireline_data(self, landscape_data, direction):
+        """
+        Generate synthetic fireline intensity data for a given direction.
+        Fireline intensity depends on fuel load, slope, and wind direction.
+        """
+        slope = landscape_data['slp']
+        fuel_model = landscape_data['fbfm']
+        canopy_cover = landscape_data['cc']
+        
+        # Base fireline intensity from fuel model and canopy cover
+        base_intensity = fuel_model * 100 + canopy_cover * 10
+        
+        # Modify based on slope and direction
+        if direction == "north":
+            # North-facing slopes might have different fire behavior
+            direction_modifier = 1.0 + 0.1 * np.sin(np.radians(slope))
+        elif direction == "east":
+            direction_modifier = 1.0 + 0.05 * np.cos(np.radians(slope))
+        elif direction == "south":
+            direction_modifier = 1.0 + 0.15 * np.sin(np.radians(slope))
+        elif direction == "west":
+            direction_modifier = 1.0 + 0.08 * np.cos(np.radians(slope))
+        else:
+            direction_modifier = 1.0
+            
+        fireline_intensity = base_intensity * direction_modifier
+        
+        # Add some noise for realism
+        noise = np.random.normal(0, 0.1, fireline_intensity.shape)
+        fireline_intensity += noise * fireline_intensity
+        
+        # Ensure positive values
+        fireline_intensity = np.maximum(fireline_intensity, 0)
+        
+        return fireline_intensity.astype(np.float32)
+    
     def load_landscape_data(self, index: int) -> Dict[str, np.ndarray]:
         """Load landscape data for a given index."""
         try:
@@ -156,6 +202,20 @@ class DomiRankMemoryLoader:
                         self.generate_sample_data(max(5, index + 1))
                         self._sample_generated = True
                     landscape_data[name] = np.load(filepath)
+            
+            # Load fireline data
+            fireline_dir = os.path.join(self.raster_dir, "fireline")
+            for direction in ["north", "east", "south", "west"]:
+                fireline_filepath = os.path.join(fireline_dir, f"fireline_{direction}_{index}.txt")
+                if os.path.exists(fireline_filepath):
+                    landscape_data[f'fireline_{direction}'] = np.loadtxt(fireline_filepath).astype(np.float32)
+                else:
+                    # Generate if doesn't exist
+                    print(f"Warning: {fireline_filepath} not found. Generating sample data...")
+                    if not hasattr(self, '_sample_generated'):
+                        self.generate_sample_data(max(5, index + 1))
+                        self._sample_generated = True
+                    landscape_data[f'fireline_{direction}'] = np.loadtxt(fireline_filepath).astype(np.float32)
             
             return landscape_data
     
