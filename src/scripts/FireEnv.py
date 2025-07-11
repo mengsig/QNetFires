@@ -67,6 +67,10 @@ class FireEnv(gym.Env):
         """
         action: flat binary array of length H*W. Reshape to (H, W).
         """
+        # Ensure simulator is initialized (important for multiprocessing)
+        if self.sim is None:
+            self.reset()
+        
         # 1) apply fuel breaks
         mask = action.reshape((self.H, self.W)).astype(bool)
         self.sim.set_fuel_breaks(mask)
@@ -115,4 +119,16 @@ class FireEnv(gym.Env):
 
     def close(self):
         plt.close("all")
+    
+    def __getstate__(self):
+        """Custom pickling for multiprocessing support."""
+        state = self.__dict__.copy()
+        # Remove the unpicklable sim object
+        state['sim'] = None
+        return state
+    
+    def __setstate__(self, state):
+        """Custom unpickling for multiprocessing support."""
+        self.__dict__.update(state)
+        # sim will be None and will be initialized when needed in step()
 

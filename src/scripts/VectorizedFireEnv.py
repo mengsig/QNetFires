@@ -74,6 +74,8 @@ class VectorizedFireEnv:
             # Store configuration
             env.num_simulations = self.num_simulations
             env.max_duration = self.max_duration
+            # Ensure environment is reset for multiprocessing
+            env.reset()
             self.envs.append(env)
         
         # Initialize executor based on method
@@ -151,6 +153,7 @@ class VectorizedFireEnv:
                 if self.method == 'sequential':
                     self.current_states[i] = self.envs[i].reset()
                 else:
+                    # For multiprocessing, ensure environment is properly reset
                     future = self.executor.submit(self.envs[i].reset)
                     self.current_states[i] = future.result()
                 
