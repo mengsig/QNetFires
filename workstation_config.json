@@ -1,0 +1,34 @@
+{
+  "raster_dir": "cropped_raster",
+  "grid_size": 50,
+  "input_channels": 12,
+  "num_landscapes": 500,
+  
+  "num_episodes": 1000,
+  "num_parallel_envs": 250,
+  "parallel_method": "threading",
+  "max_workers": 100,
+  "steps_per_episode": 200,
+  "train_frequency": 2,
+  "collection_batch_size": 64,
+  "experience_buffer_size": 1000,
+  
+  "memory_simulations": 200,
+  "pretrain_steps": 1000,
+  "percentage_increment": 2,
+  "fire_simulation_max_duration": 120,
+  
+  "learning_rate": 1e-4,
+  "gamma": 0.95,
+  "initial_epsilon": 1.0,
+  "epsilon_min": 0.01,
+  "epsilon_decay": 0.999,
+  "buffer_size": 20000,
+  "batch_size": 32,
+  
+  "target_update_frequency": 10,
+  "checkpoint_frequency": 10,
+  
+  "output_dir": "parallel_outputs",
+  "regenerate_memories": true
+}
