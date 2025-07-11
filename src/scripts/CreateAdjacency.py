@@ -121,6 +121,12 @@ for k in range(files):
         #normalize spread_rate_mean
         spread_rate_mean[i,::,::] /= num_simulations
 
+#============================================================================================
+    os.makedirs(f"{name}/fireline", exist_ok = True)
+    np.savetxt(f"{name}/fireline/fireline_north_{k}.txt", spread_rate_mean[0])
+    np.savetxt(f"{name}/fireline/fireline_east_{k}.txt", spread_rate_mean[1])
+    np.savetxt(f"{name}/fireline/fireline_south_{k}.txt", spread_rate_mean[2])
+    np.savetxt(f"{name}/fireline/fireline_west_{k}.txt", spread_rate_mean[3])
     edgelist = build_edgelist_from_spread_rates(spread_rate_mean, x, y)
     edgelist_array = np.ascontiguousarray(edgelist, dtype=np.float32)
 

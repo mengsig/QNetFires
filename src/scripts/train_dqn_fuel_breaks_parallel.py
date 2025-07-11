@@ -476,7 +476,7 @@ def get_default_parallel_config():
     return {
         # Environment settings
         'raster_dir': 'cropped_raster',
-        'grid_size': 25,
+        'grid_size': 50,
         'input_channels': 8,
         'num_landscapes': 4,
         
