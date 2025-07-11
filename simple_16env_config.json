@@ -1,0 +1,41 @@
+{
+  "raster_dir": "cropped_raster",
+  "grid_size": 50,
+  "input_channels": 12,
+  "num_landscapes": 16,
+  
+  "num_episodes": 200,
+  "num_parallel_envs": 16,
+  "parallel_method": "multiprocessing",
+  "max_workers": 16,
+  "steps_per_episode": 25,
+  "train_frequency": 4,
+  "collection_batch_size": 64,
+  "experience_buffer_size": 1000,
+  
+  "memory_simulations": 50,
+  "pretrain_steps": 100,
+  "percentage_increment": 2,
+  "fire_simulation_max_duration": 30,
+  
+  "learning_rate": 1e-4,
+  "gamma": 0.95,
+  "initial_epsilon": 1.0,
+  "epsilon_min": 0.01,
+  "epsilon_decay": 0.99,
+  "buffer_size": 20000,
+  "batch_size": 32,
+  
+  "target_update_frequency": 10,
+  "checkpoint_frequency": 10,
+  
+  "output_dir": "simple_16env_outputs",
+  "regenerate_memories": true,
+  
+  "_comment": "SIMPLE 16-ENVIRONMENT APPROACH:",
+  "_comment2": "- 16 parallel environments (simple architecture)",
+  "_comment3": "- Each environment runs 50 simulations sequentially",
+  "_comment4": "- Total: 16 processes, no nested parallelization",
+  "_comment5": "- Reduced steps_per_episode and simulation count for faster iteration",
+  "_comment6": "- Better load balancing and more diverse training data"
+}
