@@ -66,11 +66,10 @@ cd ..
 
 ## Usage
 
-### Quick Start
-The `run.sh` script provides an easy way to run complete training pipelines:
+To run the training pipeline, execute the following command:
 
 ```bash
-bash run.sh
+python src/train_dqn_fuel_breaks_parallel.py --config parallel_config.json
 ```
 
 ### Configuration
