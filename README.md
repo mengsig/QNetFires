@@ -45,7 +45,8 @@ bash install.sh --IUseArchBtw
 ```
 
 ### Quick Install (Ubuntu)
-```bash install.sh
+```bash
+bash install.sh
 ```
 
 ### Manual Installation (All Systems)
