@@ -6,10 +6,35 @@ if [ ! -x "$0" ]; then
     exit 0
 fi
 
-echo "Installing necessary python and python-virtualenv..."
-sudo pacman -S --needed base-devel
-yay -S python310
-echo "Installed python3 and python-virtualenv."
+if [ "$1" == "--ArchBtw" ]; then
+    echo "Installing on Arch Linux..."
+    echo "→ Installing base-devel, Python 3.10, and virtualenv"
+    sudo pacman -Syu --needed --noconfirm \
+        base-devel \
+        python \
+        python-virtualenv
+
+    echo
+    echo "✅ Installed Python3.10 on Arch."
+else
+    echo "Installing on Debian/Ubuntu..."
+    echo "→ Updating package lists"
+    sudo apt-get update
+
+    echo "→ Installing build-essential, Python 3, venv, and pip"
+    sudo apt-get install -y \
+        build-essential \
+        python3 \
+        python3-venv \
+        python3-pip
+
+    # (Optional) If you still need the old 'virtualenv' command:
+    # sudo pip3 install virtualenv
+
+    echo
+    echo "✅ Installed Python3.10 on Debian/Ubuntu."
+fi
+
 
 if ! command -v python3.10 &>/dev/null; then
     echo "Python3 installation failed. Exiting..."
@@ -74,6 +99,14 @@ if [ ! -x "$FILENAME_ENV" ]; then
     chmod +x "$FILENAME_ENV"
     echo "Created executable name '$FILENAME_ENV'"
 fi
+
+echo "Downloading necessary .tif files..."
+python src/scripts/Download.py
+echo "Finished downloading .tif files!"
+
+echo "Creating DomiRank Fuel-Breaks necessary for pre-training..."
+python src/scripts/CreateAdjacency.py.py
+echo "Finished creating DomiRank Fuel-Breaks!"
 
 echo "To activate the virtual environment at any time, run the command:
     source env.sh"
