@@ -29,12 +29,12 @@
   "target_update_frequency": 10,
   "checkpoint_frequency": 10,
   
-  "output_dir": "parallel_outputs",
+  "output_dir": "balanced_outputs",
   "regenerate_memories": true,
   
-  "_comment": "Balanced parallelization to avoid over-parallelization:",
-  "_comment2": "- 4 environments (multiprocessing) match CPU cores",
-  "_comment3": "- Each environment runs 100 fire simulations sequentially",
-  "_comment4": "- Clean parallelization without process explosion",
-  "_comment5": "- Optimal balance between parallelism and efficiency"
+  "_comment": "BALANCED CONFIGURATION - Avoids over-parallelization:",
+  "_comment2": "- 4 environments = 4 CPU cores (1:1 mapping)",
+  "_comment3": "- Fire simulations run sequentially within each environment",
+  "_comment4": "- Total processes: 4 (clean and efficient)",
+  "_comment5": "- Should achieve 70-90% CPU utilization without thrashing"
 }

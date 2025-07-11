@@ -45,21 +45,27 @@ Level 1: 4 Environments (multiprocessing) ✅
 
 ### With 4 CPU Cores:
 - **Sequential**: ~100 simulations = 100 time units
-- **Parallel**: ~100 simulations = 25 time units (4x speedup)
+- **Balanced Parallel**: ~100 simulations = 25 time units (4x speedup)
 - **Overall speedup**: 2-4x depending on simulation complexity
 
 ### CPU Utilization:
 - **Before**: 10-20% (single core per environment)
-- **After**: 70-90% (all cores utilized)
+- **After**: 70-90% (all cores utilized efficiently)
+
+### ⚠️ **Over-parallelization Warning**
+Avoid nested parallelization (environment-level + simulation-level) as it creates:
+- Process explosion (too many processes)
+- Context switching overhead
+- Reduced performance despite 100% CPU usage
 
 ## Configuration Options
 
-### Current Setup (4 cores):
+### Balanced Setup (4 cores - RECOMMENDED):
 ```json
 {
   "num_parallel_envs": 4,
   "parallel_method": "multiprocessing",
-  "memory_simulations": 50,
+  "memory_simulations": 100,
   "fire_simulation_max_duration": 60
 }
 ```
@@ -69,10 +75,14 @@ Level 1: 4 Environments (multiprocessing) ✅
 {
   "num_parallel_envs": 6,
   "parallel_method": "multiprocessing", 
-  "memory_simulations": 30,
+  "memory_simulations": 100,
   "fire_simulation_max_duration": 45
 }
 ```
+
+### ⚠️ **Avoid Over-parallelization**:
+- **Don't**: 8 environments + parallel simulations within each = 16+ processes
+- **Do**: 4 environments + sequential simulations within each = 4 processes
 
 ## Usage Instructions
 
@@ -87,8 +97,11 @@ python test_parallel_performance.py --cpu-test
 
 ### 2. **Run Optimized Training**
 ```bash
-# Use the optimized configuration
-python src/scripts/train_dqn_fuel_breaks_parallel.py --config parallel_config.json
+# Use the balanced configuration (RECOMMENDED)
+python3 src/scripts/train_dqn_fuel_breaks_parallel.py --config balanced_config.json
+
+# Or use the updated parallel configuration
+python3 src/scripts/train_dqn_fuel_breaks_parallel.py --config parallel_config.json
 ```
 
 ### 3. **Monitor CPU Usage**
@@ -99,8 +112,9 @@ htop  # or 'top' on systems without htop
 
 ### 4. **Fine-tune for Your System**
 Adjust based on your CPU cores:
-- **4 cores**: Use `parallel_config.json` (current settings)
-- **8+ cores**: Use `workstation_config.json` (more aggressive parallelization)
+- **4 cores**: Use `balanced_config.json` (optimal balance)
+- **8+ cores**: Use `workstation_config.json` (more environments)
+- **Performance issues**: Reduce `num_parallel_envs` to match CPU cores
 
 ## Why This Fixes Low CPU Usage
 
@@ -125,7 +139,9 @@ Adjust based on your CPU cores:
 ### Troubleshooting:
 - **Still low CPU usage**: Reduce `memory_simulations` or `fire_simulation_max_duration`
 - **High memory usage**: Reduce `num_parallel_envs` or `memory_simulations`
-- **Slow performance**: Check if using `multiprocessing` instead of `threading`
+- **Slow despite 100% CPU**: **Over-parallelization!** Reduce `num_parallel_envs` to match CPU cores
+- **Too many processes**: Disable simulation-level parallelization, use environment-level only
+- **Context switching**: Use `balanced_config.json` for optimal process count
 
 ## Advanced Configuration
 
@@ -156,11 +172,17 @@ vec_env = VectorizedFireEnv(
 - ❌ Sequential fire simulations
 - ❌ Slow training (limited by single core per environment)
 
-### After Optimization:
+### After Balanced Optimization:
 - ✅ 70-90% CPU utilization
-- ✅ Parallel fire simulations
+- ✅ Environment-level parallelization
 - ✅ 2-4x faster training
-- ✅ Better use of available computing resources
+- ✅ Optimal balance between parallelism and efficiency
+
+### ⚠️ Over-parallelization Symptoms:
+- ❌ 100% CPU usage but slow performance
+- ❌ More processes than CPU cores
+- ❌ High context switching overhead
+- ❌ Reduced experiences per second despite high CPU usage
 
 ## Next Steps
 

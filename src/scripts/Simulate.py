@@ -16,11 +16,12 @@ class Simulate:
         self.fuel_model = fuel_model
         self.average_acres_burned = 0
         
-        # Parallel processing configuration
-        self.max_workers_per_env = max(1, cpu_count() // 4)  # Reserve cores for environment-level parallelism
-        self.use_parallel_simulations = True
+        # Parallel processing configuration - more conservative
+        # Check if we're likely in a multiprocessing environment already
+        self.max_workers_per_env = 1  # Conservative default
+        self.use_parallel_simulations = False  # Disable by default to avoid over-parallelization
         
-        print(f"🔥 Simulate initialized with {self.max_workers_per_env} workers per environment")
+        print(f"🔥 Simulate initialized with {self.max_workers_per_env} workers per environment (parallel: {self.use_parallel_simulations})")
 
     def set_space_time_cubes(self, time_steps = None):
         from pyretechnics.space_time_cube import SpaceTimeCube
@@ -130,7 +131,7 @@ class Simulate:
     def run_many_simulations(self, num_simulations, max_duration=None):
         """
         Run multiple fire simulations with random ignition points.
-        Now with parallel processing for better CPU utilization.
+        Now with balanced parallelization to avoid over-parallelization.
         
         Args:
             num_simulations: Number of simulations to run
@@ -144,8 +145,9 @@ class Simulate:
             for _ in range(num_simulations)
         ]
         
-        if self.use_parallel_simulations and num_simulations > 1:
-            # PARALLEL EXECUTION - Run simulations in parallel
+        # Use parallel simulations only if specifically enabled and beneficial
+        if self.use_parallel_simulations and num_simulations > 1 and self.max_workers_per_env > 1:
+            # PARALLEL EXECUTION - Use with caution to avoid over-parallelization
             burned_matrices = []
             total_acres_burned = 0
             
@@ -184,7 +186,7 @@ class Simulate:
                 self.average_acres_burned = 0
                 
         else:
-            # SEQUENTIAL EXECUTION - Fallback for single simulation or disabled parallelism
+            # SEQUENTIAL EXECUTION - More efficient when already in parallel environments
             for i, (xcord, ycord) in enumerate(ignition_points):
                 if max_duration is not None:
                     self.run_simulation_with_duration(xcord, ycord, max_duration)
@@ -198,7 +200,8 @@ class Simulate:
                 self.average_acres_burned += self.acres_burned
         
         elapsed_time = time.time() - start_time
-        if elapsed_time > 1.0:  # Only print for slow simulations
+        # Only print timing for longer simulations to reduce output noise
+        if elapsed_time > 2.0:
             print(f"   🔥 Completed {num_simulations} simulations in {elapsed_time:.2f}s "
                   f"({num_simulations/elapsed_time:.1f} sims/sec)")
     
