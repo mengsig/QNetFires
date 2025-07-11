@@ -9,3 +9,5 @@ DomiRank/
 pyretechnics/
 cropped_raster/
 rasters_raw/
+outputs/
+parallel_outputs/

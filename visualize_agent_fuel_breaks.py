@@ -288,19 +288,20 @@ class FuelBreakVisualizer:
         steps_to_show = [5, 10, 20, len(self.placement_history) - 1]
         
         for i, step_idx in enumerate(steps_to_show):
-            if step_idx < len(self.placement_history):
-                # Base landscape (slope)
-                axes[1, i].imshow(landscape_data['slp'], cmap='terrain', alpha=0.7, origin='lower')
-                
-                # Overlay fuel breaks
-                fuel_breaks = self.placement_history[step_idx]
-                fuel_break_overlay = np.ma.masked_where(~fuel_breaks, fuel_breaks)
-                axes[1, i].imshow(fuel_break_overlay, cmap='Reds', alpha=0.8, origin='lower')
-                
-                num_breaks = np.sum(fuel_breaks)
-                axes[1, i].set_title(f'Step {step_idx}: {num_breaks} Fuel Breaks')
-                axes[1, i].axis('off')
-        
+             if step_idx < len(self.placement_history):
+                 # Base landscape (slope)
+                 plot_data = landscape_data['cc'].copy()
+                 cmap = plt.get_cmap('Greens')
+                 cmap.set_bad("purple")
+                 cmap.set_under(alpha=0)
+                 fuel_breaks = self.placement_history[step_idx]
+                 plot_data[fuel_breaks] = np.inf 
+                 axes[1, i].imshow(plot_data, cmap=cmap, alpha=1, origin='lower')
+                 
+                 num_breaks = np.sum(fuel_breaks)
+                 axes[1, i].set_title(f'Step {step_idx}: {num_breaks} Fuel Breaks')
+                 axes[1, i].axis('off')
+ 
         plt.tight_layout()
         
         if save_path:
