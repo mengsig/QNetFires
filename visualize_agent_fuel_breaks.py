@@ -208,6 +208,7 @@ class FuelBreakVisualizer:
             fire_env = None
         
         # Step-by-step placement
+        max_steps = 250
         for step in range(max_steps):
             print(f"   Step {step + 1}/{max_steps}", end=" ")
             
@@ -287,15 +288,15 @@ class FuelBreakVisualizer:
         # Plot fuel break progression
         steps_to_show = [5, 10, 20, len(self.placement_history) - 1]
         
+        cmap = plt.get_cmap("Greens", 256)
+        cmap.set_bad(color='purple')  # Set masked areas to purple
         for i, step_idx in enumerate(steps_to_show):
             if step_idx < len(self.placement_history):
                 # Base landscape (slope)
-                axes[1, i].imshow(landscape_data['slp'], cmap='terrain', alpha=0.7, origin='lower')
-                
-                # Overlay fuel breaks
-                fuel_breaks = self.placement_history[step_idx]
-                fuel_break_overlay = np.ma.masked_where(~fuel_breaks, fuel_breaks)
-                axes[1, i].imshow(fuel_break_overlay, cmap='Reds', alpha=0.8, origin='lower')
+                plot_data = landscape_data['slp'].copy()
+                fuel_breaks = self.placement_history[step_idx] #extract fuel breaks
+                plot_data[fuel_breaks] = np.inf  # Mask fuel breaks
+                axes[1, i].imshow(plot_data, cmap=cmap, origin='lower')
                 
                 num_breaks = np.sum(fuel_breaks)
                 axes[1, i].set_title(f'Step {step_idx}: {num_breaks} Fuel Breaks')
@@ -323,7 +324,7 @@ class FuelBreakVisualizer:
         fig.suptitle('DQN Agent Fuel Break Placement - Live Animation', fontsize=14)
         
         # Setup base landscape
-        ax1.imshow(landscape_data['slp'], cmap='terrain', alpha=0.8, origin='lower')
+        ax1.imshow(landscape_data['cc'], cmap='Greens', alpha=0.8, origin='lower')
         ax1.set_title('Fuel Break Placement Progress')
         ax1.set_xlabel('Grid X')
         ax1.set_ylabel('Grid Y')
@@ -335,7 +336,7 @@ class FuelBreakVisualizer:
         ax2.grid(True, alpha=0.3)
         
         # Animation elements
-        fuel_break_img = ax1.imshow(np.zeros_like(landscape_data['slp']), 
+        fuel_break_img = ax1.imshow(np.zeros_like(landscape_data['cc']), 
                                    cmap='Reds', alpha=0.8, origin='lower', vmin=0, vmax=1)
         reward_line, = ax2.plot([], [], 'b-', linewidth=2)
         step_text = ax1.text(0.02, 0.98, '', transform=ax1.transAxes, 
@@ -370,13 +371,13 @@ class FuelBreakVisualizer:
         
         if save_path:
             print(f"💾 Saving animation to {save_path} (this may take a while)...")
-            anim.save(save_path, writer='pillow', fps=2)
+            anim.save(save_path, writer='pillow', fps=10)
             print(f"✅ Animation saved to {save_path}!")
         else:
             # Save to a temporary file
             default_path = f"fuel_breaks_animation_{int(time.time())}.gif"
             print(f"💾 Saving animation to {default_path} (this may take a while)...")
-            anim.save(default_path, writer='pillow', fps=2)
+            anim.save(default_path, writer='pillow', fps=10)
             print(f"✅ Animation saved to {default_path}!")
         
         plt.close()  # Close the figure to free memory
@@ -404,24 +405,31 @@ class FuelBreakVisualizer:
             fig.suptitle('Agent vs DomiRank Fuel Break Comparison', fontsize=14)
             
             # Base landscape
-            for ax in axes:
-                ax.imshow(landscape_data['slp'], cmap='terrain', alpha=0.7, origin='lower')
+            dr_cmap = plt.get_cmap('Greens', 256)
+            dr_cmap.set_bad(color='yellow')  # Set masked areas to light blue
+            cmap = plt.cm.get_cmap('Greens', 256)
+            cmap.set_bad(color='purple')  # Set masked areas to light gray
+#            for ax in axes:
+#                landscape_data['cc'][domirank_breaks] = np.inf 
+#                ax.imshow(landscape_data['cc'], cmap='Greens', alpha=0.7, origin='lower')
             
             # DomiRank fuel breaks
-            domirank_overlay = np.ma.masked_where(~domirank_breaks, domirank_breaks)
-            axes[0].imshow(domirank_overlay, cmap='Blues', alpha=0.8, origin='lower')
+            domirank_overlay = landscape_data['cc'].copy()
+            domirank_overlay[domirank_breaks] = np.inf
+            axes[0].imshow(domirank_overlay, cmap=dr_cmap, origin='lower')
             axes[0].set_title(f'DomiRank Strategy\n{np.sum(domirank_breaks)} breaks')
             axes[0].axis('off')
             
             # Agent fuel breaks  
-            agent_overlay = np.ma.masked_where(~self.current_fuel_breaks, self.current_fuel_breaks)
-            axes[1].imshow(agent_overlay, cmap='Reds', alpha=0.8, origin='lower')
+            agent_overlay = landscape_data['cc'].copy()
+            agent_overlay[self.current_fuel_breaks] = np.inf
+            axes[1].imshow(agent_overlay, cmap=cmap, origin='lower')
             axes[1].set_title(f'DQN Agent Strategy\n{np.sum(self.current_fuel_breaks)} breaks')
             axes[1].axis('off')
             
             # Combined view
-            axes[2].imshow(domirank_overlay, cmap='Blues', alpha=0.6, origin='lower', label='DomiRank')
-            axes[2].imshow(agent_overlay, cmap='Reds', alpha=0.6, origin='lower', label='Agent')
+            axes[2].imshow(domirank_overlay, cmap=dr_cmap, alpha=0.6, origin='lower', label='DomiRank')
+            axes[2].imshow(agent_overlay, cmap=cmap, alpha=0.6, origin='lower', label='Agent')
             axes[2].set_title('Overlay Comparison\nBlue=DomiRank, Red=Agent')
             axes[2].axis('off')
             
