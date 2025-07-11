@@ -8,7 +8,12 @@ from collections import deque, namedtuple
 import copy
 
 # Experience tuple for replay buffer
-Experience = namedtuple('Experience', ['state', 'action', 'reward', 'next_state', 'done'])
+Experience = namedtuple('Experience', 
+                        ['state', 
+                         'action', 
+                         'reward', 
+                         'next_state',
+                         'done'])
 
 class DQNNetwork(nn.Module):
     """

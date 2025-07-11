@@ -37,9 +37,9 @@ class Simulate:
             "canopy_bulk_density"          : SpaceTimeCube(self.cube_shape, cbd_f32),
             "wind_speed_10m"               : SpaceTimeCube(self.cube_shape, np.float32(0)),
             "upwind_direction"             : SpaceTimeCube(self.cube_shape, np.float32(0)),
-            "fuel_moisture_dead_1hr"       : SpaceTimeCube(self.cube_shape, np.float32(0.10)),
-            "fuel_moisture_dead_10hr"      : SpaceTimeCube(self.cube_shape, np.float32(0.25)),
-            "fuel_moisture_dead_100hr"     : SpaceTimeCube(self.cube_shape, np.float32(0.50)),
+            "fuel_moisture_dead_1hr"       : SpaceTimeCube(self.cube_shape, np.float32(0.05)),
+            "fuel_moisture_dead_10hr"      : SpaceTimeCube(self.cube_shape, np.float32(0.10)),
+            "fuel_moisture_dead_100hr"     : SpaceTimeCube(self.cube_shape, np.float32(0.25)),
             "fuel_moisture_live_herbaceous": SpaceTimeCube(self.cube_shape, np.float32(0.90)),  # kg moisture/kg ovendry weight
             "fuel_moisture_live_woody"     : SpaceTimeCube(self.cube_shape, np.float32(0.60)),  # kg moisture/kg ovendry weight
             "foliar_moisture"              : SpaceTimeCube(self.cube_shape, np.float32(0.90)),
@@ -75,9 +75,9 @@ class Simulate:
                 "canopy_bulk_density"          : SpaceTimeCube(self.cube_shape, cbd_f32),
                 "wind_speed_10m"               : SpaceTimeCube(self.cube_shape, np.float32(0)),
                 "upwind_direction"             : SpaceTimeCube(self.cube_shape, np.float32(0)),
-                "fuel_moisture_dead_1hr"       : SpaceTimeCube(self.cube_shape, np.float32(0.10)),
-                "fuel_moisture_dead_10hr"      : SpaceTimeCube(self.cube_shape, np.float32(0.25)),
-                "fuel_moisture_dead_100hr"     : SpaceTimeCube(self.cube_shape, np.float32(0.50)),
+                "fuel_moisture_dead_1hr"       : SpaceTimeCube(self.cube_shape, np.float32(0.05)),
+                "fuel_moisture_dead_10hr"      : SpaceTimeCube(self.cube_shape, np.float32(0.10)),
+                "fuel_moisture_dead_100hr"     : SpaceTimeCube(self.cube_shape, np.float32(0.25)),
                 "fuel_moisture_live_herbaceous": SpaceTimeCube(self.cube_shape, np.float32(0.90)),  # kg moisture/kg ovendry weight
                 "fuel_moisture_live_woody"     : SpaceTimeCube(self.cube_shape, np.float32(0.60)),  # kg moisture/kg ovendry weight
                 "foliar_moisture"              : SpaceTimeCube(self.cube_shape, np.float32(0.90)),

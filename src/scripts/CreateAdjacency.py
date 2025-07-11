@@ -135,6 +135,7 @@ for k in range(files):
 # Extracting the centrality measures based on the user input
     lambN, _ = eigs(G, k = 1, which = "SR")
     sigma = 1 - 1/(G.shape[0])
+    sigma = 0.999
     print(f"[GENERATING-FUEL-BREAKS-domirank:] using sigma {sigma}...")
     _, centralityDistribution = domirank(G, sigma = -sigma/lambN, analytical = True) 
     centralityDistribution = centralityDistribution.real
