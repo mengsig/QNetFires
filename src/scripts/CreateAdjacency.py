@@ -53,7 +53,7 @@ for k in range(files):
     raster_dir = "cropped_rasters"
 
     rasterDict = load_all_rasters("cropped_raster", k)
-    slope, aspect, dem, cc, cbd, cbh, ch, fuel_model = rasterDict.values()
+    slope, aspect, dem, cc, cbd, cbh, ch, fuel_model, _, _, _, _ = rasterDict.values()
     xlen, ylen = slope.shape
 
 #convert to cubes
@@ -142,8 +142,8 @@ for k in range(files):
 
 # Extracting the centrality measures based on the user input
     lambN, _ = eigs(G, k = 1, which = "SR")
-    sigma = 1 - 1/(G.shape[0])
-    sigma = 0.999
+    sigma = 1 - 1/(G.shape[0]**1.5)
+    #sigma = 0.999
     print(f"[GENERATING-FUEL-BREAKS-domirank:] using sigma {sigma}...")
     _, centralityDistribution = domirank(G, sigma = -sigma/lambN, analytical = True) 
     centralityDistribution = centralityDistribution.real

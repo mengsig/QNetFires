@@ -19,14 +19,15 @@ if [ "$1" == "--IUseArchBtw" ]; then
 else
     echo "Installing on Debian/Ubuntu..."
     echo "→ Updating package lists"
+    sudo add-apt-repository ppa:deadsnakes/ppa
     sudo apt-get update
 
     echo "→ Installing build-essential, Python 3, venv, and pip"
     sudo apt-get install -y \
         build-essential \
-        python3 \
-        python3-venv \
-        python3-pip
+        python3.10 \
+        python3.10-venv \
+        python3.10-dev
 
     # (Optional) If you still need the old 'virtualenv' command:
     # sudo pip3 install virtualenv
@@ -105,7 +106,7 @@ python src/scripts/Download.py
 echo "Finished downloading .tif files!"
 
 echo "Creating DomiRank Fuel-Breaks necessary for pre-training..."
-python src/scripts/CreateAdjacency.py.py
+python src/scripts/CreateAdjacency.py
 echo "Finished creating DomiRank Fuel-Breaks!"
 
 echo "To activate the virtual environment at any time, run the command:

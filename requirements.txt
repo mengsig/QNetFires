@@ -19,3 +19,11 @@ rasterio
 imageio
 pyproj
 gym
+torch
+torchvision
+tqdm
+Pillow
+scipy
+scikit-learn
+opencv-python
+seaborn
