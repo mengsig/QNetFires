@@ -286,14 +286,15 @@ class FuelBreakVisualizer:
                 plt.colorbar(im, ax=axes[0, i], shrink=0.6)
         
         # Plot fuel break progression
-        steps_to_show = [5, 10, 20, len(self.placement_history) - 1]
+        fractional_fuel_breaks = (len(self.placement_history)-1)/4
+        steps_to_show = [int(fractional_fuel_breaks), int(2*fractional_fuel_breaks), int(3*fractional_fuel_breaks), int(4*fractional_fuel_breaks)]
         
         cmap = plt.get_cmap("Greens", 256)
         cmap.set_bad(color='purple')  # Set masked areas to purple
         for i, step_idx in enumerate(steps_to_show):
             if step_idx < len(self.placement_history):
                 # Base landscape (slope)
-                plot_data = landscape_data['slp'].copy()
+                plot_data = landscape_data['cc'].copy()
                 fuel_breaks = self.placement_history[step_idx] #extract fuel breaks
                 plot_data[fuel_breaks] = np.inf  # Mask fuel breaks
                 axes[1, i].imshow(plot_data, cmap=cmap, origin='lower')

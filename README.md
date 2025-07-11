@@ -41,7 +41,11 @@ These fireline intensity channels provide crucial information about fire behavio
 
 ### Quick Install (Arch Linux)
 ```bash
-bash install.sh
+bash install.sh --IUseArchBtw
+```
+
+### Quick Install (Ubuntu)
+```bash install.sh
 ```
 
 ### Manual Installation (All Systems)
