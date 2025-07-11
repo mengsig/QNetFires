@@ -34,9 +34,12 @@ def count_files(dir_path):
         if os.path.isfile(os.path.join(dir_path, name))
     )
 
-name = "cropped_raster/domirank"
+basename = "cropped_raster"
+name = f"{basename}/domirank"
 print(f"[CREATE-ADJACENCY]: Saving to {name}...")
+fireline_name = f"{basename}/fireline"
 os.makedirs(name, exist_ok = True)
+os.makedirs(f"{fireline_name}", exist_ok = True)
 
 files = count_files("cropped_raster/slp")
 
@@ -69,9 +72,9 @@ for k in range(files):
         "canopy_bulk_density"          : SpaceTimeCube(cube_shape, cbd),
         "wind_speed_10m"               : SpaceTimeCube(cube_shape, 0),
         "upwind_direction"             : SpaceTimeCube(cube_shape, 0),
-        "fuel_moisture_dead_1hr"       : SpaceTimeCube(cube_shape, 0.10),
-        "fuel_moisture_dead_10hr"      : SpaceTimeCube(cube_shape, 0.25),
-        "fuel_moisture_dead_100hr"     : SpaceTimeCube(cube_shape, 0.50),
+        "fuel_moisture_dead_1hr"       : SpaceTimeCube(cube_shape, 0.05),
+        "fuel_moisture_dead_10hr"      : SpaceTimeCube(cube_shape, 0.10),
+        "fuel_moisture_dead_100hr"     : SpaceTimeCube(cube_shape, 0.25),
         "fuel_moisture_live_herbaceous": SpaceTimeCube(cube_shape, 0.90),
         "fuel_moisture_live_woody"     : SpaceTimeCube(cube_shape, 0.60),
         "foliar_moisture"              : SpaceTimeCube(cube_shape, 0.90),
@@ -122,11 +125,10 @@ for k in range(files):
         spread_rate_mean[i,::,::] /= num_simulations
 
 #============================================================================================
-    os.makedirs(f"{name}/fireline", exist_ok = True)
-    np.savetxt(f"{name}/fireline/fireline_north_{k}.txt", spread_rate_mean[0])
-    np.savetxt(f"{name}/fireline/fireline_east_{k}.txt", spread_rate_mean[1])
-    np.savetxt(f"{name}/fireline/fireline_south_{k}.txt", spread_rate_mean[2])
-    np.savetxt(f"{name}/fireline/fireline_west_{k}.txt", spread_rate_mean[3])
+    np.savetxt(f"{fireline_name}/fireline_north_{k}.txt", spread_rate_mean[0])
+    np.savetxt(f"{fireline_name}/fireline_east_{k}.txt", spread_rate_mean[1])
+    np.savetxt(f"{fireline_name}/fireline_south_{k}.txt", spread_rate_mean[2])
+    np.savetxt(f"{fireline_name}/fireline_west_{k}.txt", spread_rate_mean[3])
     edgelist = build_edgelist_from_spread_rates(spread_rate_mean, x, y)
     edgelist_array = np.ascontiguousarray(edgelist, dtype=np.float32)
 
