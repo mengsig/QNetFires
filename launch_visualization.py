@@ -40,13 +40,6 @@ def main():
     print("🎬 Fuel Break Visualization Launcher")
     print("=" * 50)
     
-    # Test imports first
-    print("🔍 Testing imports...")
-    try:
-        os.system("python test_imports.py")
-    except:
-        print("⚠️  Could not run import test, proceeding anyway...")
-    
     # Find trained models
     models = find_trained_models()
     
