@@ -1,30 +1,30 @@
 {
-  "raster_dir": "cropped_raster",
-  "grid_size": 25,
-  "input_channels": 8,
-  "num_landscapes": 4,
+  "raster_dir": "cropped_raster", # Directory containing raster images
+  "grid_size": 50, # Size of the grid for the environment
+  "input_channels": 8, # Number of input channels for the neural network
+  "num_landscapes": 8, # Number of different landscapes to train on
   
-  "num_episodes": 50,
-  "num_parallel_envs": 8,
-  "parallel_method": "threading",
-  "max_workers": 4,
-  "steps_per_episode": 30,
+  "num_episodes": 200, # Total number of episodes to run (epochs)
+  "num_parallel_envs": 8, # Number of parallel environments to run -- should be less than or equal to the num_landscapes
+  "parallel_method": "threading", # Method for parallel execution (can be 'threading' or 'multiprocessing')
+  "max_workers": 8, # Maximum number of workers for parallel execution
+  "steps_per_episode": 100, # Number of fire-simulations  per episode (increases comp time but increases stability of reward).
   "train_frequency": 2,
-  "collection_batch_size": 64,
-  "experience_buffer_size": 1000,
+  "collection_batch_size": 64, # Batch size for collecting experiences
+  "experience_buffer_size": 1000, # Size of the experience buffer for storing transitions
   
-  "memory_simulations": 50,
-  "pretrain_steps": 100,
-  "percentage_increment": 2,
-  "fire_simulation_max_duration": 120,
+  "memory_simulations": 100, # Number of simulations to run for memory generation
+  "pretrain_steps": 100, # Number of steps to pretrain the model before starting the main training loop
+  "percentage_increment": 2, # do not touch
+  "fire_simulation_max_duration": 120, # Maximum duration of a fire simulation in hours
   
   "learning_rate": 1e-4,
   "gamma": 0.95,
   "initial_epsilon": 1.0,
   "epsilon_min": 0.01,
   "epsilon_decay": 0.99,
-  "buffer_size": 20000,
-  "batch_size": 32,
+  "buffer_size": 20000, # Size of the experience replay buffer
+  "batch_size": 32, # Batch size for training the model
   
   "target_update_frequency": 10,
   "checkpoint_frequency": 10,
