@@ -16,15 +16,19 @@ Key Features:
 
 import os
 import sys
-import numpy as np
-import torch
-import matplotlib.pyplot as plt
-from typing import List, Dict, Tuple
-import argparse
-from tqdm import tqdm
-import json
-from datetime import datetime
 import time
+import numpy as np
+import json
+import argparse
+from datetime import datetime
+from typing import Dict, List, Tuple
+from tqdm import tqdm
+import torch
+
+# Import matplotlib for plotting
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
 
 # Add src to path for imports
 script_dir = os.path.dirname(__file__)
@@ -268,6 +272,9 @@ class ParallelFuelBreakTrainer:
         # Calculate steps per episode based on configuration
         steps_per_episode = self.config.get('steps_per_episode', 50)
         
+        # Memory management settings
+        memory_cleanup_frequency = 10  # Clean up every 10 episodes
+        
         # Training loop
         for episode in range(self.config['num_episodes']):
             episode_start_time = time.time()
@@ -308,6 +315,20 @@ class ParallelFuelBreakTrainer:
             print(f"  Episode time: {episode_time:.2f}s")
             print(f"  Agent epsilon: {episode_results['agent_epsilon']:.3f}")
             
+            # Memory management: periodic cleanup
+            if (episode + 1) % memory_cleanup_frequency == 0:
+                print("🧹 Performing memory cleanup...")
+                self.agent.cleanup_memory()
+                self.experience_collector.clear_local_buffer()
+                
+                # Print memory status
+                if torch.cuda.is_available():
+                    print(f"   GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f} GB allocated")
+                    print(f"   GPU memory: {torch.cuda.memory_reserved() / 1024**3:.2f} GB reserved")
+                
+                print(f"   Agent memory size: {len(self.agent.memory)}")
+                print(f"   Experience buffer size: {len(self.experience_collector.experience_buffer)}")
+            
             # Update target network periodically
             if (episode + 1) % self.config['target_update_frequency'] == 0:
                 self.agent.update_target_network()
@@ -320,6 +341,11 @@ class ParallelFuelBreakTrainer:
                 self.save_training_metrics()
                 self.plot_training_progress()
                 print(f"Checkpoint saved at episode {episode + 1}")
+        
+        # Final cleanup
+        print("🧹 Final cleanup...")
+        self.agent.cleanup_memory()
+        self.experience_collector.clear_local_buffer()
         
         # Final save
         final_model_path = os.path.join(self.models_dir, 'final_model.pt')
@@ -411,9 +437,13 @@ class ParallelFuelBreakTrainer:
         plt.tight_layout()
         plot_file = os.path.join(self.plots_dir, 'parallel_training_progress.png')
         plt.savefig(plot_file, dpi=150, bbox_inches='tight')
-        plt.close()
+        plt.close(fig)  # IMPORTANT: Close figure to free memory
         
         print(f"Training progress plot saved to {plot_file}")
+        
+        # Force garbage collection to clean up matplotlib memory
+        import gc
+        gc.collect()
     
     def evaluate_model(self, model_path: str, num_eval_episodes: int = 10):
         """Evaluate a trained model using parallel environments."""

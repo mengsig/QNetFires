@@ -314,7 +314,11 @@ class FuelBreakVisualizer:
             plt.savefig(default_path, dpi=300, bbox_inches='tight')
             print(f"💾 Static visualization saved to {default_path}")
         
-        plt.close()  # Close the figure to free memory
+        plt.close(fig)  # Close the figure to free memory
+        
+        # Force garbage collection to clean up matplotlib memory
+        import gc
+        gc.collect()
     
     def visualize_animated(self, landscape_data: Dict[str, np.ndarray],
                           save_path: str = None) -> None:
@@ -381,7 +385,12 @@ class FuelBreakVisualizer:
             anim.save(default_path, writer='pillow', fps=10)
             print(f"✅ Animation saved to {default_path}!")
         
-        plt.close()  # Close the figure to free memory
+        plt.close(fig)  # Close the figure to free memory
+        
+        # Force garbage collection to clean up matplotlib memory
+        import gc
+        gc.collect()
+        
         return anim
     
     def create_comparison_plot(self, landscape_data: Dict[str, np.ndarray],
@@ -440,7 +449,11 @@ class FuelBreakVisualizer:
             comparison_path = f"fuel_breaks_comparison_{int(time.time())}.png"
             plt.savefig(comparison_path, dpi=300, bbox_inches='tight')
             print(f"💾 Comparison plot saved to {comparison_path}")
-            plt.close()
+            plt.close(fig)  # Close the figure to free memory
+            
+            # Force garbage collection to clean up matplotlib memory
+            import gc
+            gc.collect()
             
             # Print comparison statistics
             overlap = np.sum(domirank_breaks & self.current_fuel_breaks)

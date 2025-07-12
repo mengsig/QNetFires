@@ -6,6 +6,7 @@ import numpy as np
 import random
 from collections import deque, namedtuple
 import copy
+import gc
 
 # Experience tuple for replay buffer
 Experience = namedtuple('Experience', 
@@ -163,9 +164,16 @@ class ReplayBuffer:
     
     def __init__(self, capacity=100000):
         self.buffer = deque(maxlen=capacity)
+        self.capacity = capacity
     
     def push(self, state, action, reward, next_state, done):
         """Add experience to buffer."""
+        # Ensure tensors are on CPU and detached to prevent memory leaks
+        if hasattr(state, 'cpu'):
+            state = state.cpu().detach()
+        if hasattr(next_state, 'cpu'):
+            next_state = next_state.cpu().detach()
+            
         experience = Experience(state, action, reward, next_state, done)
         self.buffer.append(experience)
     
@@ -200,6 +208,11 @@ class ReplayBuffer:
     
     def __len__(self):
         return len(self.buffer)
+    
+    def clear(self):
+        """Clear the buffer and free memory."""
+        self.buffer.clear()
+        gc.collect()
 
 
 class DQNAgent:
@@ -256,9 +269,14 @@ class DQNAgent:
         # Experience replay buffer
         self.memory = ReplayBuffer(buffer_size)
         
-        # Training metrics
-        self.losses = []
-        self.rewards = []
+        # Training metrics - LIMITED SIZE to prevent memory leaks
+        self.max_history_size = 1000
+        self.losses = deque(maxlen=self.max_history_size)
+        self.rewards = deque(maxlen=self.max_history_size)
+        
+        # Memory management
+        self.cleanup_frequency = 100
+        self.training_steps = 0
         
     def preprocess_state(self, landscape_data):
         """
@@ -330,7 +348,12 @@ class DQNAgent:
             state = state.squeeze(0)
         if next_state.dim() == 4 and next_state.size(0) == 1:
             next_state = next_state.squeeze(0)
-        self.memory.push(state.cpu(), action, reward, next_state.cpu(), done)
+        
+        # Ensure tensors are detached and on CPU to prevent memory leaks
+        state = state.cpu().detach()
+        next_state = next_state.cpu().detach()
+        
+        self.memory.push(state, action, reward, next_state, done)
     
     def replay(self):
         """Train the network on a batch of experiences."""
@@ -369,9 +392,22 @@ class DQNAgent:
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
         
-        # Store loss for monitoring
+        # Store loss for monitoring (limited size)
         self.losses.append(loss.item())
         
+        # Increment training steps counter
+        self.training_steps += 1
+        
+        # Periodic memory cleanup
+        if self.training_steps % self.cleanup_frequency == 0:
+            self.cleanup_memory()
+    
+    def cleanup_memory(self):
+        """Clean up GPU memory to prevent memory leaks."""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+    
     def update_target_network(self):
         """Copy weights from main network to target network."""
         self.target_network.load_state_dict(self.q_network.state_dict())
@@ -383,8 +419,8 @@ class DQNAgent:
             'target_network_state_dict': self.target_network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'epsilon': self.epsilon,
-            'losses': self.losses,
-            'rewards': self.rewards
+            'losses': list(self.losses),
+            'rewards': list(self.rewards)
         }, filepath)
         print(f"Model saved to {filepath}")
     
@@ -395,6 +431,14 @@ class DQNAgent:
         self.target_network.load_state_dict(checkpoint['target_network_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.epsilon = checkpoint['epsilon']
-        self.losses = checkpoint['losses']
-        self.rewards = checkpoint['rewards']
+        self.losses = deque(checkpoint['losses'], maxlen=self.max_history_size)
+        self.rewards = deque(checkpoint['rewards'], maxlen=self.max_history_size)
         print(f"Model loaded from {filepath}")
+    
+    def reset_memory(self):
+        """Reset replay buffer and training metrics."""
+        self.memory.clear()
+        self.losses.clear()
+        self.rewards.clear()
+        self.cleanup_memory()
+        print("Agent memory reset")
