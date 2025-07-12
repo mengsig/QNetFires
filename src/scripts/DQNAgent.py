@@ -168,11 +168,11 @@ class ReplayBuffer:
     
     def push(self, state, action, reward, next_state, done):
         """Add experience to buffer."""
-        # Only detach if necessary, avoid unnecessary CPU transfers
+        # Ensure consistent device handling - store on CPU to avoid device conflicts
         if hasattr(state, 'detach'):
-            state = state.detach()
+            state = state.detach().cpu()
         if hasattr(next_state, 'detach'):
-            next_state = next_state.detach()
+            next_state = next_state.detach().cpu()
             
         experience = Experience(state, action, reward, next_state, done)
         self.buffer.append(experience)
@@ -192,10 +192,17 @@ class ReplayBuffer:
             state = e.state
             next_state = e.next_state
             
+            # Ensure tensors are on the correct device
+            if hasattr(state, 'to'):
+                # If it's a tensor, move to CPU first for consistency
+                state = state.cpu()
+            if hasattr(next_state, 'to'):
+                next_state = next_state.cpu()
+            
             # If state has batch dimension, remove it
-            if state.dim() == 4 and state.size(0) == 1:
+            if hasattr(state, 'dim') and state.dim() == 4 and state.size(0) == 1:
                 state = state.squeeze(0)
-            if next_state.dim() == 4 and next_state.size(0) == 1:
+            if hasattr(next_state, 'dim') and next_state.dim() == 4 and next_state.size(0) == 1:
                 next_state = next_state.squeeze(0)
                 
             states_list.append(state)
@@ -204,7 +211,7 @@ class ReplayBuffer:
             rewards_list.append(e.reward)
             dones_list.append(e.done)
         
-        # Stack tensors efficiently
+        # Stack tensors efficiently (all tensors are now on CPU)
         states = torch.stack(states_list)
         next_states = torch.stack(next_states_list)
         actions = torch.tensor(actions_list, dtype=torch.long)
@@ -388,13 +395,12 @@ class DQNAgent:
     def remember(self, state, action, reward, next_state, done):
         """Store experience in replay buffer."""
         # Remove batch dimension if present when storing
-        if state.dim() == 4 and state.size(0) == 1:
+        if hasattr(state, 'dim') and state.dim() == 4 and state.size(0) == 1:
             state = state.squeeze(0)
-        if next_state.dim() == 4 and next_state.size(0) == 1:
+        if hasattr(next_state, 'dim') and next_state.dim() == 4 and next_state.size(0) == 1:
             next_state = next_state.squeeze(0)
         
-        # Keep tensors on GPU, just detach from computation graph
-        # Moving to CPU every time is expensive and unnecessary
+        # Store in replay buffer (push method handles device consistency)
         self.memory.push(state, action, reward, next_state, done)
     
     def replay(self):
@@ -402,10 +408,10 @@ class DQNAgent:
         if len(self.memory) < self.batch_size:
             return
         
-        # Sample batch from replay buffer
+        # Sample batch from replay buffer (returns tensors on CPU)
         states, actions, rewards, next_states, dones = self.memory.sample(self.batch_size)
         
-        # Move to device
+        # Move all tensors to the correct device
         states = states.to(self.device)
         actions = actions.to(self.device)
         rewards = rewards.to(self.device)
