@@ -367,7 +367,11 @@ class IterativeFuelBreakTrainer:
         plt.tight_layout()
         plot_file = os.path.join(self.plots_dir, 'training_progress.png')
         plt.savefig(plot_file, dpi=150, bbox_inches='tight')
-        plt.close()
+        plt.close(fig)  # Close the figure to free memory
+        
+        # Force garbage collection to clean up matplotlib memory
+        import gc
+        gc.collect()
         
         print(f"Training progress plot saved to {plot_file}")
     

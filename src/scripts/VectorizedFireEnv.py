@@ -9,6 +9,7 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import queue
+import gc
 
 # Add src to path for imports
 script_dir = os.path.dirname(__file__)
@@ -213,6 +214,22 @@ class VectorizedFireEnv:
             'active_environments': self.num_envs
         }
     
+    def cleanup_memory(self):
+        """Clean up memory from environments."""
+        # Clean up each environment
+        for env in self.envs:
+            if hasattr(env, 'cleanup_memory'):
+                env.cleanup_memory()
+        
+        # Clear local state
+        self.current_states = None
+        self.current_fuel_breaks = [np.zeros((env.H, env.W), dtype=bool) for env in self.envs]
+        self.episode_rewards = [0.0] * self.num_envs
+        self.episode_steps = [0] * self.num_envs
+        
+        # Force garbage collection
+        gc.collect()
+    
     def close(self):
         """Clean up resources."""
         if self.executor is not None:
@@ -220,6 +237,9 @@ class VectorizedFireEnv:
         
         for env in self.envs:
             env.close()
+        
+        # Final cleanup
+        self.cleanup_memory()
 
 
 class ParallelExperienceCollector:
@@ -254,6 +274,10 @@ class ParallelExperienceCollector:
         # Performance tracking
         self.collection_times = []
         self.step_times = []
+        
+        # Memory management
+        self.cleanup_frequency = 50  # Clean up every 50 steps
+        self.step_counter = 0
         
     def collect_experiences(self, num_steps: int, train_frequency: int = 4) -> Dict:
         """
@@ -322,10 +346,10 @@ class ParallelExperienceCollector:
             # Store experiences
             for i in range(self.vectorized_env.num_envs):
                 experience = {
-                    'state': states_tensors[i].cpu(),
+                    'state': states_tensors[i].cpu().detach(),
                     'action': self._mask_to_action(actions[i]),
                     'reward': rewards[i],
-                    'next_state': states_tensors[i].cpu(),  # Could be updated with next obs
+                    'next_state': states_tensors[i].cpu().detach(),  # Could be updated with next obs
                     'done': dones[i],
                     'env_id': i
                 }
@@ -341,6 +365,11 @@ class ParallelExperienceCollector:
                     next_state=states_tensors[i],  # Same state, different fuel breaks
                     done=dones[i]
                 )
+            
+            # Manage buffer size to prevent memory leaks
+            if len(self.experience_buffer) > self.experience_buffer_size:
+                # Remove oldest experiences
+                self.experience_buffer = self.experience_buffer[-self.experience_buffer_size:]
             
             # Train agent periodically
             if (step + 1) % train_frequency == 0 and len(self.agent.memory) >= self.agent.batch_size:
@@ -360,6 +389,11 @@ class ParallelExperienceCollector:
             self.step_times.append(step_time)
             stats['total_steps'] += 1
             stats['total_rewards'].extend(rewards)
+            
+            # Increment step counter and perform periodic cleanup
+            self.step_counter += 1
+            if self.step_counter % self.cleanup_frequency == 0:
+                self.cleanup_memory()
         
         # Final statistics
         collection_time = time.time() - start_time
@@ -386,8 +420,6 @@ class ParallelExperienceCollector:
         landscape_data = self.vectorized_env.landscape_data_list[env_id % len(self.vectorized_env.landscape_data_list)]
         return landscape_data
     
-
-    
     def _mask_to_action(self, fuel_break_mask: np.ndarray) -> int:
         """Convert fuel break mask back to action index (for memory storage)."""
         # Find the last added fuel break (this is approximate)
@@ -410,6 +442,22 @@ class ParallelExperienceCollector:
     def clear_local_buffer(self):
         """Clear the local experience buffer."""
         self.experience_buffer.clear()
+        gc.collect()
+    
+    def cleanup_memory(self):
+        """Clean up memory from collected experiences."""
+        # Keep only recent step times
+        max_step_times = 100
+        if len(self.step_times) > max_step_times:
+            self.step_times = self.step_times[-max_step_times:]
+        
+        # Keep only recent collection times
+        max_collection_times = 20
+        if len(self.collection_times) > max_collection_times:
+            self.collection_times = self.collection_times[-max_collection_times:]
+        
+        # Force garbage collection
+        gc.collect()
 
 
 # Example usage and testing
