@@ -227,7 +227,8 @@ class DQNAgent:
     def __init__(self, input_channels=12, grid_size=50, 
                  learning_rate=1e-4, gamma=0.95, epsilon=1.0, 
                  epsilon_min=0.01, epsilon_decay=0.995,
-                 buffer_size=100000, batch_size=32):
+                 buffer_size=100000, batch_size=32,
+                 max_history_size=1000, cleanup_frequency=100):
         
         # Enhanced GPU detection and setup
         if torch.cuda.is_available():

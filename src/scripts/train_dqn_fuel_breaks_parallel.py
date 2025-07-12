@@ -103,7 +103,9 @@ class ParallelFuelBreakTrainer:
             epsilon_min=config['epsilon_min'],
             epsilon_decay=config['epsilon_decay'],
             buffer_size=config['buffer_size'],
-            batch_size=config['batch_size']
+            batch_size=config['batch_size'],
+            max_history_size=config.get('max_history_size', 1000),
+            cleanup_frequency=config.get('cleanup_frequency', 100)
         )
         
         # Initialize vectorized environment with fire simulation parameters
@@ -272,8 +274,8 @@ class ParallelFuelBreakTrainer:
         # Calculate steps per episode based on configuration
         steps_per_episode = self.config.get('steps_per_episode', 50)
         
-        # Memory management settings
-        memory_cleanup_frequency = 10  # Clean up every 10 episodes
+        # Memory management settings from config
+        memory_cleanup_frequency = self.config.get('memory_cleanup_frequency', 10)
         
         # Training loop
         for episode in range(self.config['num_episodes']):
@@ -533,6 +535,11 @@ def get_default_parallel_config():
         'epsilon_decay': 0.995,
         'buffer_size': 50000,
         'batch_size': 32,
+        
+        # Memory management settings
+        'max_history_size': 1000,
+        'cleanup_frequency': 100,
+        'memory_cleanup_frequency': 10,
         
         # Training schedule
         'target_update_frequency': 20,
