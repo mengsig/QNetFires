@@ -258,6 +258,7 @@ class DQNAgent:
         self.epsilon_min = epsilon_min
         self.epsilon_decay = epsilon_decay
         self.batch_size = batch_size
+        self.input_channels = input_channels
         
         # Initialize networks
         self.q_network = DQNNetwork(input_channels, grid_size).to(self.device)
@@ -278,14 +279,46 @@ class DQNAgent:
         self.memory = ReplayBuffer(buffer_size)
         
         # Training metrics - LIMITED SIZE to prevent memory leaks
-        self.max_history_size = 1000
+        self.max_history_size = max_history_size
         self.losses = deque(maxlen=self.max_history_size)
         self.rewards = deque(maxlen=self.max_history_size)
         
         # Memory management
-        self.cleanup_frequency = 100
+        self.cleanup_frequency = cleanup_frequency
         self.training_steps = 0
         
+        # Performance optimizations - cache common tensors and pre-warm network
+        self._initialize_performance_optimizations()
+        
+    def _initialize_performance_optimizations(self):
+        """Initialize performance optimizations to eliminate early-episode overhead."""
+        print("🚀 Initializing performance optimizations...")
+        
+        # Pre-allocate commonly used tensors
+        self._dummy_state = torch.zeros(1, self.input_channels, self.grid_size, self.grid_size, device=self.device)
+        self._available_positions_cache = np.arange(self.action_dim)
+        
+        # Pre-warm PyTorch operations with dummy forward passes
+        print("   - Pre-warming neural networks...")
+        self.q_network.eval()
+        with torch.no_grad():
+            # Multiple warmup passes to trigger JIT compilation and CUDA optimizations
+            for _ in range(10):
+                _ = self.q_network(self._dummy_state)
+                _ = self.target_network(self._dummy_state)
+        self.q_network.train()
+        
+        # Pre-warm other operations
+        dummy_batch = self._dummy_state.repeat(self.batch_size, 1, 1, 1)
+        with torch.no_grad():
+            _ = self.q_network(dummy_batch)
+            
+        # Clear any temporary memory from warmup
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
+        print("   ✅ Performance optimizations complete!")
+    
     def preprocess_state(self, landscape_data):
         """
         Preprocess landscape data for input to the network.
@@ -314,7 +347,7 @@ class DQNAgent:
     
     def act(self, state, existing_fuel_breaks=None):
         """
-        Choose action using epsilon-greedy policy.
+        Choose action using epsilon-greedy policy with optimizations.
         
         Args:
             state: Current state (landscape data)
@@ -324,23 +357,26 @@ class DQNAgent:
             Selected action (fuel break location)
         """
         if random.random() > self.epsilon:
-            # Exploit: use Q-network to select action
+            # Exploit: use Q-network to select action (fast path after warmup)
             with torch.no_grad():
                 q_values = self.q_network(state)
                 
-                # Mask out existing fuel breaks
+                # Optimized masking for existing fuel breaks
                 if existing_fuel_breaks is not None:
-                    q_values = q_values.clone()
                     flat_breaks = existing_fuel_breaks.flatten()
-                    q_values[0, flat_breaks == 1] = -float('inf')
+                    if np.any(flat_breaks):  # Only mask if there are existing breaks
+                        q_values = q_values.clone()
+                        q_values[0, flat_breaks == 1] = -float('inf')
                 
                 action = q_values.argmax().item()
         else:
-            # Explore: select random action
+            # Explore: optimized random action selection
             if existing_fuel_breaks is not None:
-                # Select from available positions only
-                available_positions = np.where(existing_fuel_breaks.flatten() == 0)[0]
-                if len(available_positions) > 0:
+                flat_breaks = existing_fuel_breaks.flatten()
+                available_mask = flat_breaks == 0
+                if np.any(available_mask):
+                    # Use pre-allocated array and boolean indexing for speed
+                    available_positions = self._available_positions_cache[available_mask]
                     action = np.random.choice(available_positions)
                 else:
                     action = np.random.randint(0, self.action_dim)
