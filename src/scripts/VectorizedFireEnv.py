@@ -276,7 +276,7 @@ class ParallelExperienceCollector:
         self.step_times = []
         
         # Memory management
-        self.cleanup_frequency = 50  # Clean up every 50 steps
+        self.cleanup_frequency = 200  # Clean up every 200 steps (less frequent)
         self.step_counter = 0
         
     def collect_experiences(self, num_steps: int, train_frequency: int = 4) -> Dict:
@@ -346,10 +346,10 @@ class ParallelExperienceCollector:
             # Store experiences
             for i in range(self.vectorized_env.num_envs):
                 experience = {
-                    'state': states_tensors[i].cpu().detach(),
+                    'state': states_tensors[i],  # Keep on GPU, avoid expensive CPU transfer
                     'action': self._mask_to_action(actions[i]),
                     'reward': rewards[i],
-                    'next_state': states_tensors[i].cpu().detach(),  # Could be updated with next obs
+                    'next_state': states_tensors[i],  # Could be updated with next obs
                     'done': dones[i],
                     'env_id': i
                 }
@@ -366,9 +366,9 @@ class ParallelExperienceCollector:
                     done=dones[i]
                 )
             
-            # Manage buffer size to prevent memory leaks
-            if len(self.experience_buffer) > self.experience_buffer_size:
-                # Remove oldest experiences
+            # Manage buffer size less aggressively to avoid performance hits
+            if len(self.experience_buffer) > self.experience_buffer_size * 1.2:  # Only trim when 20% over
+                # Remove oldest experiences but keep more for efficiency
                 self.experience_buffer = self.experience_buffer[-self.experience_buffer_size:]
             
             # Train agent periodically

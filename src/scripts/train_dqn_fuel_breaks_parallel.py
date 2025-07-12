@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+THIS SHOULD BE A LINTER ERROR#!/usr/bin/env python3
 """
 Parallel Deep Q-Learning Training Script for Fuel Break Placement
 
@@ -538,8 +538,8 @@ def get_default_parallel_config():
         
         # Memory management settings
         'max_history_size': 1000,
-        'cleanup_frequency': 100,
-        'memory_cleanup_frequency': 10,
+        'cleanup_frequency': 1000,  # Much less frequent agent cleanup
+        'memory_cleanup_frequency': 20,  # Less frequent episode cleanup
         
         # Training schedule
         'target_update_frequency': 20,

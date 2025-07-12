@@ -168,11 +168,11 @@ class ReplayBuffer:
     
     def push(self, state, action, reward, next_state, done):
         """Add experience to buffer."""
-        # Ensure tensors are on CPU and detached to prevent memory leaks
-        if hasattr(state, 'cpu'):
-            state = state.cpu().detach()
-        if hasattr(next_state, 'cpu'):
-            next_state = next_state.cpu().detach()
+        # Only detach if necessary, avoid unnecessary CPU transfers
+        if hasattr(state, 'detach'):
+            state = state.detach()
+        if hasattr(next_state, 'detach'):
+            next_state = next_state.detach()
             
         experience = Experience(state, action, reward, next_state, done)
         self.buffer.append(experience)
@@ -181,9 +181,12 @@ class ReplayBuffer:
         """Sample a batch of experiences."""
         experiences = random.sample(self.buffer, batch_size)
         
-        # Ensure states are 3D (C, H, W) before stacking
+        # Prepare lists for batch creation
         states_list = []
         next_states_list = []
+        actions_list = []
+        rewards_list = []
+        dones_list = []
         
         for e in experiences:
             state = e.state
@@ -197,12 +200,16 @@ class ReplayBuffer:
                 
             states_list.append(state)
             next_states_list.append(next_state)
+            actions_list.append(e.action)
+            rewards_list.append(e.reward)
+            dones_list.append(e.done)
         
-        states = torch.stack(states_list)  # Should be (batch_size, channels, height, width)
-        actions = torch.tensor([e.action for e in experiences], dtype=torch.long)
-        rewards = torch.tensor([e.reward for e in experiences], dtype=torch.float32)
+        # Stack tensors efficiently
+        states = torch.stack(states_list)
         next_states = torch.stack(next_states_list)
-        dones = torch.tensor([e.done for e in experiences], dtype=torch.bool)
+        actions = torch.tensor(actions_list, dtype=torch.long)
+        rewards = torch.tensor(rewards_list, dtype=torch.float32)
+        dones = torch.tensor(dones_list, dtype=torch.bool)
         
         return states, actions, rewards, next_states, dones
     
@@ -350,10 +357,8 @@ class DQNAgent:
         if next_state.dim() == 4 and next_state.size(0) == 1:
             next_state = next_state.squeeze(0)
         
-        # Ensure tensors are detached and on CPU to prevent memory leaks
-        state = state.cpu().detach()
-        next_state = next_state.cpu().detach()
-        
+        # Keep tensors on GPU, just detach from computation graph
+        # Moving to CPU every time is expensive and unnecessary
         self.memory.push(state, action, reward, next_state, done)
     
     def replay(self):
@@ -405,9 +410,12 @@ class DQNAgent:
     
     def cleanup_memory(self):
         """Clean up GPU memory to prevent memory leaks."""
-        if torch.cuda.is_available():
+        # Only do expensive cleanup when really needed
+        if torch.cuda.is_available() and torch.cuda.memory_allocated() > 0.8 * torch.cuda.get_device_properties(0).total_memory:
             torch.cuda.empty_cache()
-        gc.collect()
+        # Avoid frequent garbage collection which is expensive
+        if self.training_steps % 5000 == 0:  # Only every 5000 steps
+            gc.collect()
     
     def update_target_network(self):
         """Copy weights from main network to target network."""
