@@ -369,9 +369,9 @@ class IterativeFuelBreakTrainer:
         plt.savefig(plot_file, dpi=150, bbox_inches='tight')
         plt.close(fig)  # Close the figure to free memory
         
-        # Force garbage collection to clean up matplotlib memory
-        import gc
-        gc.collect()
+        # Light cleanup without expensive garbage collection during training
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         
         print(f"Training progress plot saved to {plot_file}")
     

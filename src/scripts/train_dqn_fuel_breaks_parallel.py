@@ -1,4 +1,4 @@
-THIS SHOULD BE A LINTER ERROR#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Parallel Deep Q-Learning Training Script for Fuel Break Placement
 
@@ -417,7 +417,7 @@ class ParallelFuelBreakTrainer:
         
         # Agent losses
         if self.agent.losses:
-            recent_losses = self.agent.losses[-1000:]  # Show recent losses
+            recent_losses = list(self.agent.losses)  # Convert deque to list for plotting
             axes[1, 1].plot(recent_losses)
             axes[1, 1].set_title('Training Losses (Recent)')
             axes[1, 1].set_xlabel('Training Step')
@@ -443,9 +443,9 @@ class ParallelFuelBreakTrainer:
         
         print(f"Training progress plot saved to {plot_file}")
         
-        # Force garbage collection to clean up matplotlib memory
-        import gc
-        gc.collect()
+        # Light cleanup without expensive garbage collection during training
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     
     def evaluate_model(self, model_path: str, num_eval_episodes: int = 10):
         """Evaluate a trained model using parallel environments."""
