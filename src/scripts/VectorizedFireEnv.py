@@ -10,6 +10,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import queue
 import gc
+from collections import deque
 
 # Add src to path for imports
 script_dir = os.path.dirname(__file__)
@@ -289,7 +290,8 @@ class VectorizedFireEnv:
             self.executor.shutdown(wait=True)
         
         for env in self.envs:
-            env.close()
+            if hasattr(env, 'close'):
+                env.close()
         
         # Final cleanup
         self.cleanup_memory()
@@ -321,12 +323,12 @@ class ParallelExperienceCollector:
         self.experience_buffer_size = experience_buffer_size
         
         # Local experience buffer for batched training - pre-allocate for performance
-        self.experience_buffer = []
+        self.experience_buffer = deque(maxlen=experience_buffer_size)  # Use deque for efficiency
         self.total_experiences_collected = 0
         
-        # Performance tracking - pre-allocate with reasonable sizes
-        self.collection_times = []
-        self.step_times = []
+        # Performance tracking - bounded collections for memory efficiency
+        self.collection_times = deque(maxlen=100)  # Keep only recent 100 collection times
+        self.step_times = deque(maxlen=500)  # Keep only recent 500 step times
         
         # Memory management
         self.cleanup_frequency = 200  # Clean up every 200 steps (less frequent)
@@ -463,11 +465,6 @@ class ParallelExperienceCollector:
                     done=dones[i]
                 )
             
-            # Manage buffer size less aggressively to avoid performance hits
-            if len(self.experience_buffer) > self.experience_buffer_size * 1.2:  # Only trim when 20% over
-                # Remove oldest experiences but keep more for efficiency
-                self.experience_buffer = self.experience_buffer[-self.experience_buffer_size:]
-            
             # Train agent periodically
             if (step + 1) % train_frequency == 0 and len(self.agent.memory) >= self.agent.batch_size:
                 self.agent.replay()
@@ -502,7 +499,7 @@ class ParallelExperienceCollector:
         self.collection_times.append(collection_time)
         
         stats['collection_time'] = collection_time
-        stats['average_step_time'] = np.mean(self.step_times[-num_steps:]) if self.step_times else 0
+        stats['average_step_time'] = np.mean(self.step_times) if self.step_times else 0
         stats['experiences_collected'] = len(self.experience_buffer)
         stats['total_experiences'] = self.total_experiences_collected
         stats['mean_reward'] = np.mean(stats['total_rewards']) if stats['total_rewards'] else 0
@@ -541,16 +538,6 @@ class ParallelExperienceCollector:
     
     def cleanup_memory(self):
         """Clean up memory from collected experiences."""
-        # Keep only recent step times
-        max_step_times = 100
-        if len(self.step_times) > max_step_times:
-            self.step_times = self.step_times[-max_step_times:]
-        
-        # Keep only recent collection times
-        max_collection_times = 20
-        if len(self.collection_times) > max_collection_times:
-            self.collection_times = self.collection_times[-max_collection_times:]
-        
         # Force garbage collection
         gc.collect()
 

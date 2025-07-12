@@ -4,18 +4,19 @@
   "input_channels": 12,
   "num_landscapes": 4,
   
-  "num_episodes": 500,
+  "num_episodes": 200,
   "num_parallel_envs": 8,
   "parallel_method": "threading",
   "max_workers": null,
   "steps_per_episode": 50,
   "train_frequency": 4,
   "collection_batch_size": 64,
-  "experience_buffer_size": 3000,
+  "experience_buffer_size": 2000,
   
   "memory_simulations": 3,
   "pretrain_steps": 200,
   "percentage_increment": 2,
+  "fire_simulation_max_duration": 30,
   
   "learning_rate": 1e-4,
   "gamma": 0.95,
@@ -25,25 +26,24 @@
   "buffer_size": 50000,
   "batch_size": 32,
   
-  "max_history_size": 3000,
+  "max_history_size": 1000,
   "cleanup_frequency": 5000,
   "memory_cleanup_frequency": 100,
   
   "target_update_frequency": 20,
-  "checkpoint_frequency": 50,
+  "checkpoint_frequency": 20,
+  "eval_steps_per_episode": 30,
   
-  "output_dir": "ultra_optimized_outputs",
+  "output_dir": "outputs",
   "regenerate_memories": false,
   
-  "_performance_notes": {
-    "description": "Ultra-optimized config to eliminate 55x early-episode slowdown",
-    "optimizations": [
-      "Pre-warmed PyTorch networks eliminate JIT compilation overhead",
-      "Pre-warmed fire environments eliminate initialization overhead", 
-      "Removed debug printing that slowed early episodes",
-      "Optimized action selection and memory management",
-      "Larger buffers reduce allocation overhead",
-      "Less frequent cleanup preserves performance"
-    ]
+  "_comments": {
+    "cleanup_frequency": "Agent cleanup every 5000 training steps (very conservative)",
+    "memory_cleanup_frequency": "Episode cleanup every 100 episodes (balanced)",
+    "max_history_size": "Maximum items in bounded collections (1000)",
+    "experience_buffer_size": "Local experience buffer size (2000)",
+    "memory_simulations": "Fire simulations per training step (3 - balanced speed/accuracy)",
+    "parallel_method": "Use threading for better performance on this system",
+    "fire_simulation_max_duration": "Maximum fire simulation duration in minutes"
   }
 }

@@ -12,6 +12,7 @@ Key Features:
 - Both threading and multiprocessing support
 - Advanced experience collection strategies
 - Real-time performance monitoring
+- Memory leak fixes and performance optimizations
 """
 
 import os
@@ -24,6 +25,8 @@ from datetime import datetime
 from typing import Dict, List, Tuple
 from tqdm import tqdm
 import torch
+import gc
+from collections import deque
 
 # Import matplotlib for plotting
 import matplotlib
@@ -105,7 +108,7 @@ class ParallelFuelBreakTrainer:
             buffer_size=config['buffer_size'],
             batch_size=config['batch_size'],
             max_history_size=config.get('max_history_size', 1000),
-            cleanup_frequency=config.get('cleanup_frequency', 100)
+            cleanup_frequency=config.get('cleanup_frequency', 5000)
         )
         
         # Initialize vectorized environment with fire simulation parameters
@@ -126,14 +129,14 @@ class ParallelFuelBreakTrainer:
             experience_buffer_size=config.get('experience_buffer_size', 2000)
         )
         
-        # Training metrics
+        # Training metrics - bounded collections to prevent memory leaks
         self.training_metrics = {
-            'episode_rewards': [],
-            'episode_losses': [],
-            'parallel_rewards': [],
-            'collection_times': [],
-            'experiences_per_second': [],
-            'environments_reset': [],
+            'episode_rewards': deque(maxlen=config.get('max_history_size', 1000)),
+            'episode_losses': deque(maxlen=config.get('max_history_size', 1000)),
+            'parallel_rewards': deque(maxlen=config.get('max_history_size', 1000)),
+            'collection_times': deque(maxlen=config.get('max_history_size', 1000)),
+            'experiences_per_second': deque(maxlen=config.get('max_history_size', 1000)),
+            'environments_reset': deque(maxlen=config.get('max_history_size', 1000)),
             'best_reward': -float('inf'),
             'total_steps': 0,
             'total_experiences': 0
@@ -141,6 +144,9 @@ class ParallelFuelBreakTrainer:
         
         # Create output directories
         self.setup_output_directories()
+        
+        # Pre-warm the training system
+        self._initialize_performance_optimizations()
     
     def _count_available_landscapes(self) -> int:
         """Count how many landscape files are actually available."""
@@ -154,6 +160,39 @@ class ParallelFuelBreakTrainer:
             except:
                 break
         return count
+    
+    def _initialize_performance_optimizations(self):
+        """Initialize performance optimizations for training."""
+        print("⚡ Optimizing parallel training system...")
+        
+        # Pre-warm neural networks with dummy data
+        print("   - Pre-warming neural networks...")
+        try:
+            # Create dummy landscape data for warming
+            dummy_landscape_data = self.landscape_data_list[0]
+            dummy_state = self.agent.preprocess_state(dummy_landscape_data)
+            dummy_fuel_breaks = np.zeros((self.agent.grid_size, self.agent.grid_size), dtype=bool)
+            
+            # Warm up network inference
+            for _ in range(10):  # Multiple passes to trigger JIT compilation
+                _ = self.agent.act(dummy_state, dummy_fuel_breaks)
+            
+            # Warm up training step
+            if len(self.agent.memory) >= self.agent.batch_size:
+                self.agent.replay()
+            
+        except Exception as e:
+            print(f"   ⚠️ Network pre-warming failed: {e}")
+        
+        # Pre-allocate common arrays
+        print("   - Pre-allocating arrays...")
+        self._dummy_arrays = {
+            'rewards': np.zeros(self.config['num_parallel_envs']),
+            'dones': np.zeros(self.config['num_parallel_envs'], dtype=bool),
+            'actions': np.zeros(self.config['num_parallel_envs'], dtype=int)
+        }
+        
+        print("   ✅ Parallel training system optimization complete!")
         
     def setup_output_directories(self):
         """Create directories for outputs."""
@@ -237,8 +276,6 @@ class ParallelFuelBreakTrainer:
         Returns:
             Episode statistics
         """
-        print(f"Running parallel collection episode with {self.vectorized_env.num_envs} environments...")
-        
         # Collect experiences using the parallel collector
         collection_stats = self.experience_collector.collect_experiences(
             num_steps=steps_per_episode,
@@ -275,13 +312,15 @@ class ParallelFuelBreakTrainer:
         steps_per_episode = self.config.get('steps_per_episode', 50)
         
         # Memory management settings from config
-        memory_cleanup_frequency = self.config.get('memory_cleanup_frequency', 10)
+        memory_cleanup_frequency = self.config.get('memory_cleanup_frequency', 100)
         
         # Training loop
         for episode in range(self.config['num_episodes']):
             episode_start_time = time.time()
             
-            print(f"\n--- Episode {episode + 1}/{self.config['num_episodes']} ---")
+            # Show progress every 10 episodes to avoid spam
+            if episode % 10 == 0:
+                print(f"\n--- Episode {episode + 1}/{self.config['num_episodes']} ---")
             
             # Run parallel experience collection
             episode_results = self.run_parallel_collection_episode(steps_per_episode)
@@ -302,26 +341,36 @@ class ParallelFuelBreakTrainer:
                 # Save best model
                 best_model_path = os.path.join(self.models_dir, 'best_model.pt')
                 self.agent.save_model(best_model_path)
-                print(f"New best reward: {episode_reward:.2f} - Model saved!")
+                if episode % 10 == 0:
+                    print(f"New best reward: {episode_reward:.2f} - Model saved!")
             
             episode_time = time.time() - episode_start_time
             
-            print(f"Episode Results:")
-            print(f"  Mean reward: {episode_reward:.2f}")
-            print(f"  Total steps: {episode_results['total_steps']}")
-            print(f"  Experiences collected: {episode_results['experiences_collected']}")
-            print(f"  Training steps: {episode_results['training_steps']}")
-            print(f"  Environments reset: {episode_results['environments_reset']}")
-            print(f"  Collection time: {episode_results['collection_time']:.2f}s")
-            print(f"  Experiences/second: {episode_results['experiences_per_second']:.1f}")
-            print(f"  Episode time: {episode_time:.2f}s")
-            print(f"  Agent epsilon: {episode_results['agent_epsilon']:.3f}")
+            # Show detailed stats every 10 episodes
+            if episode % 10 == 0:
+                print(f"Episode Results:")
+                print(f"  Mean reward: {episode_reward:.2f}")
+                print(f"  Total steps: {episode_results['total_steps']}")
+                print(f"  Experiences collected: {episode_results['experiences_collected']}")
+                print(f"  Training steps: {episode_results['training_steps']}")
+                print(f"  Environments reset: {episode_results['environments_reset']}")
+                print(f"  Collection time: {episode_results['collection_time']:.2f}s")
+                print(f"  Experiences/second: {episode_results['experiences_per_second']:.1f}")
+                print(f"  Episode time: {episode_time:.2f}s")
+                print(f"  Agent epsilon: {episode_results['agent_epsilon']:.3f}")
             
             # Memory management: periodic cleanup
             if (episode + 1) % memory_cleanup_frequency == 0:
                 print("🧹 Performing memory cleanup...")
                 self.agent.cleanup_memory()
                 self.experience_collector.clear_local_buffer()
+                self.vectorized_env.cleanup_memory()
+                
+                # Conditional garbage collection
+                if (episode + 1) % (memory_cleanup_frequency * 5) == 0:
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
                 
                 # Print memory status
                 if torch.cuda.is_available():
@@ -334,7 +383,8 @@ class ParallelFuelBreakTrainer:
             # Update target network periodically
             if (episode + 1) % self.config['target_update_frequency'] == 0:
                 self.agent.update_target_network()
-                print("Target network updated")
+                if episode % 10 == 0:
+                    print("Target network updated")
             
             # Save checkpoint periodically
             if (episode + 1) % self.config['checkpoint_frequency'] == 0:
@@ -348,6 +398,7 @@ class ParallelFuelBreakTrainer:
         print("🧹 Final cleanup...")
         self.agent.cleanup_memory()
         self.experience_collector.clear_local_buffer()
+        self.vectorized_env.cleanup_memory()
         
         # Final save
         final_model_path = os.path.join(self.models_dir, 'final_model.pt')
@@ -366,10 +417,10 @@ class ParallelFuelBreakTrainer:
         """Save training metrics to file."""
         metrics_file = os.path.join(self.output_dir, 'training_metrics.json')
         
-        # Convert numpy arrays to lists for JSON serialization
+        # Convert deques and numpy arrays to lists for JSON serialization
         metrics_to_save = {}
         for key, value in self.training_metrics.items():
-            if isinstance(value, (list, np.ndarray)):
+            if isinstance(value, (list, np.ndarray, deque)):
                 metrics_to_save[key] = list(value)
             else:
                 metrics_to_save[key] = value
@@ -385,7 +436,8 @@ class ParallelFuelBreakTrainer:
         
         # Parallel rewards
         if self.training_metrics['parallel_rewards']:
-            axes[0, 0].plot(self.training_metrics['parallel_rewards'])
+            rewards_list = list(self.training_metrics['parallel_rewards'])
+            axes[0, 0].plot(rewards_list)
             axes[0, 0].set_title('Parallel Environment Mean Rewards')
             axes[0, 0].set_xlabel('Episode')
             axes[0, 0].set_ylabel('Mean Reward')
@@ -393,7 +445,8 @@ class ParallelFuelBreakTrainer:
         
         # Collection times
         if self.training_metrics['collection_times']:
-            axes[0, 1].plot(self.training_metrics['collection_times'])
+            times_list = list(self.training_metrics['collection_times'])
+            axes[0, 1].plot(times_list)
             axes[0, 1].set_title('Experience Collection Times')
             axes[0, 1].set_xlabel('Episode')
             axes[0, 1].set_ylabel('Time (seconds)')
@@ -401,7 +454,8 @@ class ParallelFuelBreakTrainer:
         
         # Experiences per second
         if self.training_metrics['experiences_per_second']:
-            axes[0, 2].plot(self.training_metrics['experiences_per_second'])
+            eps_list = list(self.training_metrics['experiences_per_second'])
+            axes[0, 2].plot(eps_list)
             axes[0, 2].set_title('Collection Efficiency')
             axes[0, 2].set_xlabel('Episode')
             axes[0, 2].set_ylabel('Experiences/Second')
@@ -409,7 +463,8 @@ class ParallelFuelBreakTrainer:
         
         # Environment resets
         if self.training_metrics['environments_reset']:
-            axes[1, 0].plot(self.training_metrics['environments_reset'])
+            resets_list = list(self.training_metrics['environments_reset'])
+            axes[1, 0].plot(resets_list)
             axes[1, 0].set_title('Environment Resets per Episode')
             axes[1, 0].set_xlabel('Episode')
             axes[1, 0].set_ylabel('Number of Resets')
@@ -426,10 +481,12 @@ class ParallelFuelBreakTrainer:
             axes[1, 1].set_yscale('log')
         
         # Cumulative experiences
-        cumulative_experiences = np.cumsum([len(self.training_metrics['parallel_rewards']) * 
-                                          self.config.get('steps_per_episode', 50) * 
-                                          self.vectorized_env.num_envs] * len(self.training_metrics['parallel_rewards']))
-        if len(cumulative_experiences) > 0:
+        if self.training_metrics['parallel_rewards']:
+            num_episodes = len(self.training_metrics['parallel_rewards'])
+            cumulative_experiences = np.cumsum([
+                self.config.get('steps_per_episode', 50) * self.vectorized_env.num_envs
+                for _ in range(num_episodes)
+            ])
             axes[1, 2].plot(cumulative_experiences)
             axes[1, 2].set_title('Cumulative Experiences Collected')
             axes[1, 2].set_xlabel('Episode')
@@ -538,8 +595,8 @@ def get_default_parallel_config():
         
         # Memory management settings
         'max_history_size': 1000,
-        'cleanup_frequency': 1000,  # Much less frequent agent cleanup
-        'memory_cleanup_frequency': 20,  # Less frequent episode cleanup
+        'cleanup_frequency': 5000,  # Much less frequent agent cleanup
+        'memory_cleanup_frequency': 100,  # Less frequent episode cleanup
         
         # Training schedule
         'target_update_frequency': 20,

@@ -14,6 +14,7 @@ import os
 import sys
 import argparse
 import numpy as np
+import gc
 
 # Set matplotlib backend for non-interactive use
 import matplotlib
@@ -208,7 +209,6 @@ class FuelBreakVisualizer:
             fire_env = None
         
         # Step-by-step placement
-        max_steps = 250
         for step in range(max_steps):
             print(f"   Step {step + 1}/{max_steps}", end=" ")
             
@@ -317,7 +317,6 @@ class FuelBreakVisualizer:
         plt.close(fig)  # Close the figure to free memory
         
         # Force garbage collection to clean up matplotlib memory
-        import gc
         gc.collect()
     
     def visualize_animated(self, landscape_data: Dict[str, np.ndarray],
@@ -388,7 +387,6 @@ class FuelBreakVisualizer:
         plt.close(fig)  # Close the figure to free memory
         
         # Force garbage collection to clean up matplotlib memory
-        import gc
         gc.collect()
         
         return anim
@@ -416,12 +414,9 @@ class FuelBreakVisualizer:
             
             # Base landscape
             dr_cmap = plt.get_cmap('Greens', 256)
-            dr_cmap.set_bad(color='yellow')  # Set masked areas to light blue
+            dr_cmap.set_bad(color='yellow')  # Set masked areas to yellow
             cmap = plt.cm.get_cmap('Greens', 256)
-            cmap.set_bad(color='purple')  # Set masked areas to light gray
-#            for ax in axes:
-#                landscape_data['cc'][domirank_breaks] = np.inf 
-#                ax.imshow(landscape_data['cc'], cmap='Greens', alpha=0.7, origin='lower')
+            cmap.set_bad(color='purple')  # Set masked areas to purple
             
             # DomiRank fuel breaks
             domirank_overlay = landscape_data['cc'].copy()
@@ -440,7 +435,7 @@ class FuelBreakVisualizer:
             # Combined view
             axes[2].imshow(domirank_overlay, cmap=dr_cmap, alpha=0.6, origin='lower', label='DomiRank')
             axes[2].imshow(agent_overlay, cmap=cmap, alpha=0.6, origin='lower', label='Agent')
-            axes[2].set_title('Overlay Comparison\nBlue=DomiRank, Red=Agent')
+            axes[2].set_title('Overlay Comparison\nYellow=DomiRank, Purple=Agent')
             axes[2].axis('off')
             
             plt.tight_layout()
@@ -452,7 +447,6 @@ class FuelBreakVisualizer:
             plt.close(fig)  # Close the figure to free memory
             
             # Force garbage collection to clean up matplotlib memory
-            import gc
             gc.collect()
             
             # Print comparison statistics
