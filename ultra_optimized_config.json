@@ -11,7 +11,7 @@
   "steps_per_episode": 50,
   "train_frequency": 4,
   "collection_batch_size": 64,
-  "experience_buffer_size": 2000,
+  "experience_buffer_size": 1000,
   
   "memory_simulations": 3,
   "pretrain_steps": 200,
@@ -23,12 +23,12 @@
   "initial_epsilon": 1.0,
   "epsilon_min": 0.01,
   "epsilon_decay": 0.995,
-  "buffer_size": 50000,
+  "buffer_size": 25000,
   "batch_size": 32,
   
-  "max_history_size": 1000,
-  "cleanup_frequency": 5000,
-  "memory_cleanup_frequency": 100,
+  "max_history_size": 500,
+  "cleanup_frequency": 1000,
+  "memory_cleanup_frequency": 5,
   
   "target_update_frequency": 20,
   "checkpoint_frequency": 20,
@@ -38,10 +38,11 @@
   "regenerate_memories": false,
   
   "_comments": {
-    "cleanup_frequency": "Agent cleanup every 5000 training steps (very conservative)",
-    "memory_cleanup_frequency": "Episode cleanup every 100 episodes (balanced)",
-    "max_history_size": "Maximum items in bounded collections (1000)",
-    "experience_buffer_size": "Local experience buffer size (2000)",
+    "cleanup_frequency": "Agent cleanup every 1000 training steps (MUCH more frequent)",
+    "memory_cleanup_frequency": "Episode cleanup every 5 episodes (VERY aggressive)",
+    "max_history_size": "Maximum items in bounded collections (500 - REDUCED)",
+    "experience_buffer_size": "Local experience buffer size (1000 - REDUCED)",
+    "buffer_size": "Replay buffer size (25000 - REDUCED from 50000)",
     "memory_simulations": "Fire simulations per training step (3 - balanced speed/accuracy)",
     "parallel_method": "Use threading for better performance on this system",
     "fire_simulation_max_duration": "Maximum fire simulation duration in minutes"

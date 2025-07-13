@@ -452,11 +452,20 @@ class DQNAgent:
     
     def cleanup_memory(self):
         """Clean up GPU memory to prevent memory leaks."""
-        # Only do expensive cleanup when really needed
-        if torch.cuda.is_available() and torch.cuda.memory_allocated() > 0.8 * torch.cuda.get_device_properties(0).total_memory:
+        # Always clear GPU cache when cleanup is called
+        if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        # Avoid frequent garbage collection which is expensive
-        if self.training_steps % 5000 == 0:  # Only every 5000 steps
+            
+        # More frequent garbage collection to prevent memory buildup
+        gc.collect()
+        
+        # Optionally clear some of the replay buffer if it's getting too large
+        if len(self.memory) > self.memory.capacity * 0.9:  # If buffer is 90% full
+            print(f"   Replay buffer near capacity ({len(self.memory)}/{self.memory.capacity}), keeping recent experiences...")
+            # Keep only the most recent experiences
+            recent_experiences = list(self.memory.buffer)[-int(self.memory.capacity * 0.7):]
+            self.memory.buffer.clear()
+            self.memory.buffer.extend(recent_experiences)
             gc.collect()
     
     def update_target_network(self):

@@ -318,6 +318,23 @@ class ParallelFuelBreakTrainer:
         for episode in range(self.config['num_episodes']):
             episode_start_time = time.time()
             
+            # Monitor memory at start of episode
+            if torch.cuda.is_available():
+                allocated_gb = torch.cuda.memory_allocated() / 1024**3
+                total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                memory_usage_percent = (allocated_gb / total_gb) * 100
+                
+                if episode % 10 == 0:  # Print every 10 episodes
+                    print(f"🔍 Episode {episode + 1} memory: {allocated_gb:.2f}GB/{total_gb:.2f}GB ({memory_usage_percent:.1f}%)")
+                
+                # Proactive cleanup if memory usage is getting high
+                if memory_usage_percent > 75:
+                    print(f"⚠️  Memory usage high ({memory_usage_percent:.1f}%), performing proactive cleanup...")
+                    self.agent.cleanup_memory()
+                    self.experience_collector.cleanup_memory()
+                    torch.cuda.empty_cache()
+                    gc.collect()
+            
             # Show progress every 10 episodes to avoid spam
             if episode % 10 == 0:
                 print(f"\n--- Episode {episode + 1}/{self.config['num_episodes']} ---")
@@ -366,19 +383,36 @@ class ParallelFuelBreakTrainer:
                 self.experience_collector.clear_local_buffer()
                 self.vectorized_env.cleanup_memory()
                 
-                # Conditional garbage collection
-                if (episode + 1) % (memory_cleanup_frequency * 5) == 0:
-                    gc.collect()
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
+                # Much more frequent garbage collection to prevent OOM
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 
                 # Print memory status
                 if torch.cuda.is_available():
-                    print(f"   GPU memory: {torch.cuda.memory_allocated() / 1024**3:.2f} GB allocated")
-                    print(f"   GPU memory: {torch.cuda.memory_reserved() / 1024**3:.2f} GB reserved")
+                    allocated = torch.cuda.memory_allocated() / 1024**3
+                    reserved = torch.cuda.memory_reserved() / 1024**3
+                    max_allocated = torch.cuda.max_memory_allocated() / 1024**3
+                    print(f"   GPU memory: {allocated:.2f} GB allocated, {reserved:.2f} GB reserved")
+                    print(f"   GPU max allocated: {max_allocated:.2f} GB")
+                    
+                    # Reset peak memory tracker
+                    torch.cuda.reset_peak_memory_stats()
                 
                 print(f"   Agent memory size: {len(self.agent.memory)}")
                 print(f"   Experience buffer size: {len(self.experience_collector.experience_buffer)}")
+                
+            # Additional aggressive cleanup every episode if getting close to memory limit
+            if torch.cuda.is_available():
+                allocated_gb = torch.cuda.memory_allocated() / 1024**3
+                total_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                memory_usage_percent = (allocated_gb / total_gb) * 100
+                
+                if memory_usage_percent > 80:  # If using more than 80% of GPU memory
+                    print(f"⚠️  High memory usage ({memory_usage_percent:.1f}%), performing emergency cleanup...")
+                    self.agent.cleanup_memory()
+                    torch.cuda.empty_cache()
+                    gc.collect()
             
             # Update target network periodically
             if (episode + 1) % self.config['target_update_frequency'] == 0:

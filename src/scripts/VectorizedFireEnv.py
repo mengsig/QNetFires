@@ -331,7 +331,7 @@ class ParallelExperienceCollector:
         self.step_times = deque(maxlen=500)  # Keep only recent 500 step times
         
         # Memory management
-        self.cleanup_frequency = 200  # Clean up every 200 steps (less frequent)
+        self.cleanup_frequency = 50  # Clean up every 50 steps (much more frequent)
         self.step_counter = 0
         
         # Performance optimizations
@@ -538,8 +538,20 @@ class ParallelExperienceCollector:
     
     def cleanup_memory(self):
         """Clean up memory from collected experiences."""
+        # Clear experience buffer more aggressively
+        if len(self.experience_buffer) > self.experience_buffer_size * 0.7:
+            # Keep only recent experiences
+            recent_size = int(self.experience_buffer_size * 0.5)
+            recent_experiences = list(self.experience_buffer)[-recent_size:]
+            self.experience_buffer.clear()
+            self.experience_buffer.extend(recent_experiences)
+        
         # Force garbage collection
         gc.collect()
+        
+        # Clear GPU cache if available
+        if hasattr(torch, 'cuda') and torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 # Example usage and testing
