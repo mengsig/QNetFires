@@ -31,7 +31,8 @@ class VectorizedFireEnv:
     
     def __init__(self, landscape_data_list: List[Dict], num_envs: int = None, 
                  method: str = 'threading', max_workers: int = None,
-                 num_simulations: int = 10, max_duration: int = None):
+                 num_simulations: int = 10, max_duration: int = None,
+                 random_landscapes: bool = True):
         """
         Initialize vectorized fire environment.
         
@@ -42,6 +43,7 @@ class VectorizedFireEnv:
             max_workers: Maximum number of worker threads/processes
             num_simulations: Number of simulations to run in run_many_simulations
             max_duration: Maximum duration for each simulation (minutes)
+            random_landscapes: If True, randomly sample landscapes for each env
         """
         self.landscape_data_list = landscape_data_list
         self.num_envs = num_envs or len(landscape_data_list)
@@ -49,6 +51,7 @@ class VectorizedFireEnv:
         self.max_workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
         self.num_simulations = num_simulations
         self.max_duration = max_duration
+        self.random_landscapes = random_landscapes
         
         print(f"🚀 VectorizedFireEnv configuration:")
         print(f"   - Requested environments: {num_envs}")
@@ -58,25 +61,13 @@ class VectorizedFireEnv:
         print(f"   - Max workers: {self.max_workers}")
         print(f"   - Fire simulations per step: {num_simulations}")
         print(f"   - Max duration: {max_duration} minutes")
+        print(f"   - Random landscape sampling: {random_landscapes}")
         
-        # Create environments
+        # Initialize environments with random or cyclic landscape assignment
         self.envs = []
-        for i in range(self.num_envs):
-            landscape_data = landscape_data_list[i % len(landscape_data_list)]
-            env = FireEnv(
-                slope=landscape_data['slp'],
-                aspect=landscape_data['asp'],
-                dem=landscape_data['dem'],
-                cc=landscape_data['cc'],
-                cbd=landscape_data['cbd'],
-                cbh=landscape_data['cbh'],
-                ch=landscape_data['ch'],
-                fuel_model=landscape_data['fbfm']
-            )
-            # Store configuration
-            env.num_simulations = self.num_simulations
-            env.max_duration = self.max_duration
-            self.envs.append(env)
+        self.current_landscape_indices = []  # Track which landscape each env is using
+        
+        self._create_environments()
         
         # Initialize executor based on method
         if method == 'threading':
@@ -97,6 +88,66 @@ class VectorizedFireEnv:
         # Performance optimizations - pre-warm environments
         self._initialize_performance_optimizations()
         
+    def _create_environments(self):
+        """Create environments with landscape assignment (random or cyclic)."""
+        self.envs = []
+        self.current_landscape_indices = []
+        
+        for i in range(self.num_envs):
+            if self.random_landscapes:
+                # Randomly sample a landscape for this environment
+                landscape_idx = np.random.randint(0, len(self.landscape_data_list))
+            else:
+                # Use cyclic assignment (original behavior)
+                landscape_idx = i % len(self.landscape_data_list)
+            
+            landscape_data = self.landscape_data_list[landscape_idx]
+            self.current_landscape_indices.append(landscape_idx)
+            
+            env = FireEnv(
+                slope=landscape_data['slp'],
+                aspect=landscape_data['asp'],
+                dem=landscape_data['dem'],
+                cc=landscape_data['cc'],
+                cbd=landscape_data['cbd'],
+                cbh=landscape_data['cbh'],
+                ch=landscape_data['ch'],
+                fuel_model=landscape_data['fbfm']
+            )
+            # Store configuration
+            env.num_simulations = self.num_simulations
+            env.max_duration = self.max_duration
+            self.envs.append(env)
+            
+        if self.random_landscapes:
+            print(f"   🎲 Randomly assigned landscapes: {self.current_landscape_indices}")
+        else:
+            print(f"   🔄 Cyclically assigned landscapes: {self.current_landscape_indices}")
+    
+    def resample_landscapes(self):
+        """Resample landscapes for all environments (for episode-level diversity)."""
+        if not self.random_landscapes:
+            return  # Only resample if random mode is enabled
+            
+        print(f"🎲 Resampling landscapes for {self.num_envs} environments...")
+        old_indices = self.current_landscape_indices.copy()
+        
+        # Create new environments with randomly sampled landscapes
+        self._create_environments()
+        
+        # Reset environment state
+        self.current_fuel_breaks = [np.zeros((env.H, env.W), dtype=bool) for env in self.envs]
+        self.episode_rewards = [0.0] * self.num_envs
+        self.episode_steps = [0] * self.num_envs
+        
+        print(f"   📊 Landscape changes: {old_indices} → {self.current_landscape_indices}")
+        
+        # Return how many landscapes actually changed
+        changes = sum(1 for old, new in zip(old_indices, self.current_landscape_indices) if old != new)
+        print(f"   ✅ {changes}/{self.num_envs} environments got new landscapes")
+        
+        return changes
+    
     def _initialize_performance_optimizations(self):
         """Pre-warm environments to eliminate early-episode overhead."""
         print("🔥 Pre-warming fire environments...")

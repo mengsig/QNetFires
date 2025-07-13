@@ -118,7 +118,8 @@ class ParallelFuelBreakTrainer:
             method=config['parallel_method'],
             max_workers=config.get('max_workers', None),
             num_simulations=config['memory_simulations'],
-            max_duration=config.get('fire_simulation_max_duration', None)
+            max_duration=config.get('fire_simulation_max_duration', None),
+            random_landscapes=config.get('random_landscapes', True)
         )
         
         # Initialize experience collector
@@ -338,6 +339,12 @@ class ParallelFuelBreakTrainer:
             # Show progress every 10 episodes to avoid spam
             if episode % 10 == 0:
                 print(f"\n--- Episode {episode + 1}/{self.config['num_episodes']} ---")
+            
+            # Resample landscapes for diversity (if random_landscapes is enabled)
+            if self.config.get('random_landscapes', True):
+                landscape_changes = self.vectorized_env.resample_landscapes()
+                if episode % 10 == 0:  # Only print details every 10 episodes
+                    print(f"   🎲 Landscape diversity: {landscape_changes}/{self.vectorized_env.num_envs} envs got new landscapes")
             
             # Run parallel experience collection
             episode_results = self.run_parallel_collection_episode(steps_per_episode)
@@ -601,7 +608,7 @@ def get_default_parallel_config():
         'raster_dir': 'cropped_raster',
         'grid_size': 50,
         'input_channels': 12,
-        'num_landscapes': 4,
+        'num_landscapes': 100,
         
         # Parallel training settings
         'num_episodes': 100,
@@ -612,6 +619,7 @@ def get_default_parallel_config():
         'train_frequency': 4,
         'collection_batch_size': 64,
         'experience_buffer_size': 2000,
+        'random_landscapes': True,
         
         # Memory initialization
         'memory_simulations': 3,

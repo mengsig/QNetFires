@@ -31,6 +31,7 @@
 "num_parallel_envs": 8            // Number of environments running simultaneously
 "parallel_method": "threading"    // Use threading for parallelization
 "train_frequency": 4              // Train neural network every 4 environment steps
+"random_landscapes": true         // Randomly sample landscapes for each environment
 ```
 
 ### **🧠 Neural Network Parameters**
@@ -74,35 +75,35 @@
 ### **❌ NO EXPLICIT TRAIN/TEST SPLIT**
 Your current setup does **NOT** have a traditional train/test split! Here's what actually happens:
 
-### **🔄 Current Data Usage:**
-1. **Training Set**: `num_landscapes = 4` landscapes are used
-2. **Cycling**: The 8 parallel environments cycle through these 4 landscapes
-   - Environment 0 → Landscape 0
-   - Environment 1 → Landscape 1  
-   - Environment 2 → Landscape 2
-   - Environment 3 → Landscape 3
-   - Environment 4 → Landscape 0 (cycles back)
-   - Environment 5 → Landscape 1
+### **🔄 NEW IMPROVED Data Usage:**
+1. **Training Set**: `num_landscapes = 100` landscapes are used (16% of your 616!)
+2. **Random Sampling**: Each environment randomly samples from all 100 landscapes every episode
+   - Episode 1: [Landscape 45, 12, 89, 3, 67, 23, 91, 8] (8 random samples)
+   - Episode 2: [Landscape 7, 56, 34, 78, 12, 90, 45, 67] (8 new random samples)
+   - Episode 3: [Landscape 23, 87, 1, 56, 12, 45, 78, 34] (8 new random samples)
    - etc.
 
-3. **Evaluation**: Uses the **SAME** 4 landscapes for evaluation (no separate test set)
+3. **Total Diversity**: Over 200 episodes × 8 environments = 1,600 random landscape samples!
+4. **Evaluation**: Uses the **SAME** 100 landscapes for evaluation (still need separate test set)
 
 ### **📊 What This Means:**
-- **Training Data**: Only 4 landscapes out of your 616 available
-- **Test Data**: Same 4 landscapes (potential overfitting!)
-- **Unused Data**: 612 landscapes are completely unused!
+- **Training Data**: 100 landscapes out of your 616 available (16% - much better!)
+- **Random Sampling**: 1,600 diverse landscape experiences over training
+- **Test Data**: Same 100 landscapes (still potential overfitting, but much better diversity)
+- **Unused Data**: 516 landscapes unused (could increase num_landscapes further!)
 
 ---
 
 ## 🗺️ **Your 616 Maps - Are They All Used?**
 
-### **❌ NO - Only 4 of 616 Maps Are Used!**
+### **✅ MUCH BETTER - 100 of 616 Maps Are Used!**
 
-**Current Usage:**
+**NEW Usage:**
 ```
 Available: 616 landscape maps
-Used: 4 maps (0.65% of your data!)
-Unused: 612 maps (99.35% wasted!)
+Used: 100 maps (16% of your data!)
+Random Samples: 1,600 landscape experiences over training
+Unused: 516 maps (84% still unused, but much better!)
 ```
 
 **Why So Few?**
@@ -176,11 +177,12 @@ cropped_raster/
 
 ## 🎯 **Summary**
 
-**Current Setup:**
-- 📊 4 landscapes used for both training AND testing
-- 🔄 8 parallel environments cycling through these 4 landscapes  
-- ❌ 612 of your 616 landscapes are unused
-- ⚠️ No proper train/test split (high overfitting risk)
+**NEW IMPROVED Setup:**
+- 📊 100 landscapes used for both training AND testing (16% of your data!)
+- 🎲 8 parallel environments randomly sampling from these 100 landscapes each episode
+- ✅ 1,600 diverse landscape experiences over 200 episodes
+- 📈 516 of your 616 landscapes still unused (but much better diversity!)
+- ⚠️ Still no proper train/test split (but much lower overfitting risk)
 
 **Recommended Changes:**
 - 📈 Use 400-500 landscapes for training

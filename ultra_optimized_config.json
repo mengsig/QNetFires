@@ -2,7 +2,7 @@
   "raster_dir": "cropped_raster",
   "grid_size": 50,
   "input_channels": 12,
-  "num_landscapes": 4,
+  "num_landscapes": 100,
   
   "num_episodes": 200,
   "num_parallel_envs": 8,
@@ -12,6 +12,7 @@
   "train_frequency": 4,
   "collection_batch_size": 64,
   "experience_buffer_size": 1000,
+  "random_landscapes": true,
   
   "memory_simulations": 3,
   "pretrain_steps": 200,
@@ -45,6 +46,8 @@
     "buffer_size": "Replay buffer size (25000 - REDUCED from 50000)",
     "memory_simulations": "Fire simulations per training step (3 - balanced speed/accuracy)",
     "parallel_method": "Use threading for better performance on this system",
-    "fire_simulation_max_duration": "Maximum fire simulation duration in minutes"
+    "fire_simulation_max_duration": "Maximum fire simulation duration in minutes",
+    "num_landscapes": "Use 100 of 616 available landscapes (16% of your data)",
+    "random_landscapes": "Randomly sample landscapes for each environment each episode"
   }
 }
