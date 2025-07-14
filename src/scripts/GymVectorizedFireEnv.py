@@ -68,7 +68,7 @@ class SingleFireEnvWrapper(gym.Env):
         self.episode_start_time = time.time()
         
     def reset(self, **kwargs):
-        """Reset environment and return initial observation."""
+        """Reset environment and return initial observation and info."""
         self.episode_steps = 0
         self.episode_start_time = time.time()
         
@@ -78,7 +78,14 @@ class SingleFireEnvWrapper(gym.Env):
         # Convert to full observation format (12 channels)
         observation = self._construct_full_observation(burned_map)
         
-        return observation
+        # Create info dictionary
+        info = {
+            'env_id': self.env_id,
+            'episode_steps': self.episode_steps,
+            'episode_time': 0.0
+        }
+        
+        return observation, info
     
     def step(self, action):
         """Execute action and return next observation, reward, done, info."""
@@ -252,7 +259,8 @@ class OptimizedGymVectorizedFireEnv:
         if self.environment_resets % 10 == 0:  # Every 10 resets
             self._reshuffle_environments()
         
-        observations = self.vector_env.reset(**kwargs)
+        # SyncVectorEnv.reset() returns (observations, infos) tuple
+        observations, infos = self.vector_env.reset(**kwargs)
         
         return observations
     
