@@ -247,6 +247,11 @@ All your requested issues have been comprehensively addressed:
 - **Solution**: Added discrete action to binary mask conversion
 - **Result**: DQN agent can use efficient discrete action space
 
+### 8. ✅ **Fixed Modern Gym Interface (5-Value)**
+- **Problem**: `ValueError: not enough values to unpack (expected 5, got 4)`
+- **Solution**: Updated step() methods to return 5 values (observation, reward, terminated, truncated, info)
+- **Result**: Full compatibility with modern gym environments
+
 ## 🚀 **Final Implementation**
 
 The optimized implementation provides:
@@ -265,5 +270,6 @@ The optimized implementation provides:
 - ✅ **Action conversion**: Discrete actions properly converted to binary masks
 - ✅ **Memory management**: Comprehensive cleanup and monitoring
 - ✅ **Model optimization**: 60% parameter reduction with maintained effectiveness
+- ✅ **Modern gym compatibility**: 5-value step interface (terminated/truncated flags)
 
 Your forest fire prevention DQN is now optimized for production use with robust performance, stability, and full compatibility with modern gym environments!

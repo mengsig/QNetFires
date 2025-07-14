@@ -88,7 +88,7 @@ class SingleFireEnvWrapper(gym.Env):
         return observation, info
     
     def step(self, action):
-        """Execute action and return next observation, reward, done, info."""
+        """Execute action and return next observation, reward, terminated, truncated, info."""
         self.episode_steps += 1
         
         # Convert discrete action to binary mask
@@ -108,12 +108,18 @@ class SingleFireEnvWrapper(gym.Env):
         info['episode_steps'] = self.episode_steps
         info['episode_time'] = time.time() - self.episode_start_time
         
-        if done:
+        # Split done into terminated and truncated for newer gym versions
+        # FireEnv episodes end when simulation completes (terminated)
+        # No time-based truncation in this case
+        terminated = done
+        truncated = False
+        
+        if terminated:
             self.episode_rewards.append(reward)
             info['episode_reward'] = reward
             info['episode_length'] = self.episode_steps
         
-        return observation, reward, done, info
+        return observation, reward, terminated, truncated, info
     
     def _construct_full_observation(self, burned_map):
         """Construct full 12-channel observation from landscape data and current fire state."""
@@ -274,7 +280,11 @@ class OptimizedGymVectorizedFireEnv:
         """Execute actions in all environments."""
         self.total_steps += len(actions)
         
-        observations, rewards, dones, infos = self.vector_env.step(actions)
+        # SyncVectorEnv.step() returns 5 values: obs, rewards, terminated, truncated, infos
+        observations, rewards, terminated, truncated, infos = self.vector_env.step(actions)
+        
+        # Combine terminated and truncated into done for backward compatibility
+        dones = terminated | truncated
         
         # Update statistics
         self.episode_count += sum(dones)
