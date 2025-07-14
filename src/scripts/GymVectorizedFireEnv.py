@@ -51,14 +51,14 @@ class SingleFireEnvWrapper(gym.Env):
         self.fire_env.max_duration = max_duration
         
         # Define action and observation spaces
-        grid_size = landscape_data['slp'].shape[0]
-        self.action_space = spaces.Discrete(grid_size * grid_size)
+        self.grid_size = landscape_data['slp'].shape[0]
+        self.action_space = spaces.Discrete(self.grid_size * self.grid_size)
         
         # 12 channels: 8 landscape + 4 fireline intensity
         self.observation_space = spaces.Box(
             low=0.0,
             high=1.0,
-            shape=(12, grid_size, grid_size),
+            shape=(12, self.grid_size, self.grid_size),
             dtype=np.float32
         )
         
@@ -91,8 +91,14 @@ class SingleFireEnvWrapper(gym.Env):
         """Execute action and return next observation, reward, done, info."""
         self.episode_steps += 1
         
+        # Convert discrete action to binary mask
+        # action is an integer from 0 to (grid_size^2 - 1)
+        # Convert to binary mask where only the selected position is True
+        action_mask = np.zeros(self.grid_size * self.grid_size, dtype=np.float32)
+        action_mask[action] = 1.0
+        
         # Execute action in underlying FireEnv
-        burned_map, reward, done, info = self.fire_env.step(action)
+        burned_map, reward, done, info = self.fire_env.step(action_mask)
         
         # Convert to full observation format (12 channels)
         observation = self._construct_full_observation(burned_map)
