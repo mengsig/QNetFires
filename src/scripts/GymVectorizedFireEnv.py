@@ -33,12 +33,22 @@ class SingleFireEnvWrapper(gym.Env):
         self.num_simulations = num_simulations
         self.max_duration = max_duration
         
-        # Initialize the underlying FireEnv
+        # Initialize the underlying FireEnv with unpacked landscape data
         self.fire_env = FireEnv(
-            landscape_data=landscape_data,
-            num_simulations=num_simulations,
-            max_duration=max_duration
+            slope=landscape_data['slp'],
+            aspect=landscape_data['asp'],
+            dem=landscape_data['dem'],
+            cc=landscape_data['cc'],
+            cbd=landscape_data['cbd'],
+            cbh=landscape_data['cbh'],
+            ch=landscape_data['ch'],
+            fuel_model=landscape_data['fbfm'],
+            ignite_point=None  # Use default center ignition
         )
+        
+        # Set simulation parameters on the FireEnv instance
+        self.fire_env.num_simulations = num_simulations
+        self.fire_env.max_duration = max_duration
         
         # Define action and observation spaces
         grid_size = landscape_data['slp'].shape[0]
@@ -62,11 +72,11 @@ class SingleFireEnvWrapper(gym.Env):
         self.episode_steps = 0
         self.episode_start_time = time.time()
         
-        # Reset the underlying FireEnv
-        initial_state = self.fire_env.reset()
+        # Reset the underlying FireEnv (returns burned fire map)
+        burned_map = self.fire_env.reset()
         
-        # Convert to observation format
-        observation = self._state_to_observation(initial_state)
+        # Convert to full observation format (12 channels)
+        observation = self._construct_full_observation(burned_map)
         
         return observation
     
@@ -75,10 +85,10 @@ class SingleFireEnvWrapper(gym.Env):
         self.episode_steps += 1
         
         # Execute action in underlying FireEnv
-        next_state, reward, done, info = self.fire_env.step(action)
+        burned_map, reward, done, info = self.fire_env.step(action)
         
-        # Convert state to observation
-        observation = self._state_to_observation(next_state)
+        # Convert to full observation format (12 channels)
+        observation = self._construct_full_observation(burned_map)
         
         # Add environment-specific info
         info['env_id'] = self.env_id
@@ -92,37 +102,36 @@ class SingleFireEnvWrapper(gym.Env):
         
         return observation, reward, done, info
     
-    def _state_to_observation(self, state):
-        """Convert FireEnv state to gym observation format."""
-        # Stack all landscape layers
+    def _construct_full_observation(self, burned_map):
+        """Construct full 12-channel observation from landscape data and current fire state."""
         obs_layers = []
         
         # Add landscape data layers (8 channels)
         for key in ['slp', 'asp', 'dem', 'cc', 'cbd', 'cbh', 'ch', 'fbfm']:
-            if key in state:
-                layer = state[key]
+            if key in self.landscape_data:
+                layer = self.landscape_data[key]
                 if isinstance(layer, torch.Tensor):
                     layer = layer.cpu().numpy()
-                obs_layers.append(layer)
+                obs_layers.append(layer.astype(np.float32))
         
         # Add fireline intensity data (4 channels)
         for direction in ['north', 'south', 'east', 'west']:
             fireline_key = f'fireline_{direction}'
-            if fireline_key in state:
-                layer = state[fireline_key]
+            if fireline_key in self.landscape_data:
+                layer = self.landscape_data[fireline_key]
                 if isinstance(layer, torch.Tensor):
                     layer = layer.cpu().numpy()
-                obs_layers.append(layer)
+                obs_layers.append(layer.astype(np.float32))
             else:
                 # Create zero layer if fireline data is missing
-                obs_layers.append(np.zeros_like(obs_layers[0]))
+                obs_layers.append(np.zeros_like(obs_layers[0], dtype=np.float32))
         
-        # Stack all layers
-        observation = np.stack(obs_layers, axis=0).astype(np.float32)
+        # Stack all layers to create 12-channel observation
+        observation = np.stack(obs_layers, axis=0)
         
         # Ensure observation shape is correct
         if observation.shape[0] != 12:
-            raise ValueError(f"Expected 12 channels, got {observation.shape[0]}")
+            raise ValueError(f"Expected 12 channels, got {observation.shape[0]}. Available keys: {list(self.landscape_data.keys())}")
         
         return observation
     
