@@ -185,7 +185,8 @@ class IterativeFuelBreakTrainer:
         env = self.create_environment(landscape_data)
         
         # Initialize episode
-        state = env.reset()
+        reset_result = env.reset()
+        state = reset_result[0] if isinstance(reset_result, tuple) else reset_result
         state_tensor = self.agent.preprocess_state(landscape_data)
         
         current_fuel_breaks = np.zeros((self.config['grid_size'], self.config['grid_size']), dtype=bool)

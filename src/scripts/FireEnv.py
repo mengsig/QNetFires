@@ -55,13 +55,13 @@ class FireEnv(gym.Env):
         return [seed]
 
     def reset(self):
-        """Reset environment and return initial observation (all zeros)."""
+        """Reset environment and return initial observation (all zeros) and info."""
         # Re-instantiate the simulator
         self.sim = Simulate(*self._static_args)
         self.sim.set_space_time_cubes()
         # blank observation until the run
         self.last_firemap = np.zeros((self.H, self.W), dtype=np.uint8)
-        return self.last_firemap
+        return self.last_firemap, {}
 
     def step(self, action):
         """

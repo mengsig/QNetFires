@@ -95,11 +95,13 @@ class VectorizedFireEnv:
     def reset(self) -> List[np.ndarray]:
         """Reset all environments and return initial observations."""
         if self.method == 'sequential':
-            self.current_states = [env.reset() for env in self.envs]
+            reset_results = [env.reset() for env in self.envs]
+            self.current_states = [result[0] if isinstance(result, tuple) else result for result in reset_results]
         else:
             # Parallel reset
             futures = [self.executor.submit(env.reset) for env in self.envs]
-            self.current_states = [future.result() for future in futures]
+            reset_results = [future.result() for future in futures]
+            self.current_states = [result[0] if isinstance(result, tuple) else result for result in reset_results]
         
         # Reset episode tracking
         self.current_fuel_breaks = [np.zeros((env.H, env.W), dtype=bool) for env in self.envs]
@@ -149,10 +151,12 @@ class VectorizedFireEnv:
             if done:
                 # Reset this environment
                 if self.method == 'sequential':
-                    self.current_states[i] = self.envs[i].reset()
+                    reset_result = self.envs[i].reset()
+                    self.current_states[i] = reset_result[0] if isinstance(reset_result, tuple) else reset_result
                 else:
                     future = self.executor.submit(self.envs[i].reset)
-                    self.current_states[i] = future.result()
+                    reset_result = future.result()
+                    self.current_states[i] = reset_result[0] if isinstance(reset_result, tuple) else reset_result
                 
                 self.current_fuel_breaks[i] = np.zeros((self.envs[i].H, self.envs[i].W), dtype=bool)
                 self.episode_rewards[i] = 0.0
@@ -188,10 +192,12 @@ class VectorizedFireEnv:
             
             if done:
                 if self.method == 'sequential':
-                    self.current_states[i] = self.envs[i].reset()
+                    reset_result = self.envs[i].reset()
+                    self.current_states[i] = reset_result[0] if isinstance(reset_result, tuple) else reset_result
                 else:
                     future = self.executor.submit(self.envs[i].reset)
-                    self.current_states[i] = future.result()
+                    reset_result = future.result()
+                    self.current_states[i] = reset_result[0] if isinstance(reset_result, tuple) else reset_result
                 
                 self.current_fuel_breaks[i] = np.zeros((self.envs[i].H, self.envs[i].W), dtype=bool)
                 self.episode_rewards[i] = 0.0

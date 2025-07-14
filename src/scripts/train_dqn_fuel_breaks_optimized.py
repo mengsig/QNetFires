@@ -80,7 +80,7 @@ class OptimizedFireEnvWrapper(gym.Wrapper):
         self.episode_steps = 0
         
     def reset(self):
-        """Reset environment and return initial observation."""
+        """Reset environment and return initial observation and info."""
         self.episode_reward = 0.0
         self.episode_steps = 0
         return self.env.reset()

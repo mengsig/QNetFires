@@ -11,7 +11,8 @@ from src.utils.loadingUtils import load_all_rasters
 rasterDict = load_all_rasters("cropped_raster", 50)
 slope, aspect, dem, cc, cbd, cbh, ch, fuel_model = rasterDict.values()
 env = FireEnv(slope, aspect, dem, cc, cbd, cbh, ch, fuel_model)
-obs = env.reset()
+reset_result = env.reset()
+obs = reset_result[0] if isinstance(reset_result, tuple) else reset_result
 
 # Sample random fuel‐break mask:
 action = env.action_space.sample()
