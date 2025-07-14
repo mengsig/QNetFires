@@ -31,32 +31,32 @@ class DQNNetwork(nn.Module):
         self.grid_size = grid_size
         self.action_dim = action_dim or (grid_size * grid_size)
         
-        # Initial convolutional layers with batch normalization
-        self.conv1 = nn.Conv2d(input_channels, 64, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(128)
+        # Initial convolutional layers with batch normalization - REDUCED BY FACTOR OF 2
+        self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, padding=1)  # 64 -> 32
+        self.bn1 = nn.BatchNorm2d(32)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)  # 128 -> 64
+        self.bn2 = nn.BatchNorm2d(64)
         
-        # Residual blocks
-        self.res_block1 = ResidualBlock(128, 128)
-        self.res_block2 = ResidualBlock(128, 256)
-        self.res_block3 = ResidualBlock(256, 256)
+        # Residual blocks - REDUCED BY FACTOR OF 2
+        self.res_block1 = ResidualBlock(64, 64)  # 128 -> 64
+        self.res_block2 = ResidualBlock(64, 128)  # 128, 256 -> 64, 128
+        self.res_block3 = ResidualBlock(128, 128)  # 256 -> 128
         
-        # Attention mechanism
-        self.attention = SpatialAttention(256)
+        # Attention mechanism - REDUCED BY FACTOR OF 2
+        self.attention = SpatialAttention(128)  # 256 -> 128
         
-        # Feature extraction layers
-        self.conv3 = nn.Conv2d(256, 512, kernel_size=3, padding=1)
-        self.bn3 = nn.BatchNorm2d(512)
-        self.conv4 = nn.Conv2d(512, 256, kernel_size=3, padding=1)
-        self.bn4 = nn.BatchNorm2d(256)
+        # Feature extraction layers - REDUCED BY FACTOR OF 2
+        self.conv3 = nn.Conv2d(128, 256, kernel_size=3, padding=1)  # 256, 512 -> 128, 256
+        self.bn3 = nn.BatchNorm2d(256)
+        self.conv4 = nn.Conv2d(256, 128, kernel_size=3, padding=1)  # 512, 256 -> 256, 128
+        self.bn4 = nn.BatchNorm2d(128)
         
-        # Final layers for Q-value prediction
-        self.conv_final = nn.Conv2d(256, 128, kernel_size=1)
-        self.bn_final = nn.BatchNorm2d(128)
+        # Final layers for Q-value prediction - REDUCED BY FACTOR OF 2
+        self.conv_final = nn.Conv2d(128, 64, kernel_size=1)  # 256, 128 -> 128, 64
+        self.bn_final = nn.BatchNorm2d(64)
         
         # Output layer - produces Q-value for each spatial location
-        self.q_value_head = nn.Conv2d(128, 1, kernel_size=1)
+        self.q_value_head = nn.Conv2d(64, 1, kernel_size=1)  # 128 -> 64
         
         # Dropout for regularization
         self.dropout = nn.Dropout2d(p=0.2)
