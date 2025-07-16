@@ -281,13 +281,15 @@ class OptimizedFuelBreakTrainer:
             if 'memory_usage' in episode_results:
                 print(f"  GPU memory usage: {episode_results['memory_usage']:.2f} GB")
             
-            # Print environment statistics
+            # Print enhanced environment diversity statistics
             env_stats = episode_results['performance_stats']
-            print(f"  Environment stats:")
+            print(f"  Environment diversity stats:")
             print(f"    Total episodes: {env_stats['total_episodes']}")
             print(f"    Average reward: {env_stats['average_reward']:.2f}")
-            print(f"    Unique environments used: {env_stats['unique_environments_used']}")
             print(f"    Current landscapes: {env_stats['current_landscape_indices']}")
+            print(f"    Unique landscapes used: {env_stats['unique_environments_used']}/{env_stats['total_available_landscapes']}")
+            print(f"    Diversity coverage: {env_stats['diversity_percentage']:.1f}%")
+            print(f"    Total environment selections: {env_stats['total_environment_selections']}")
             
             # Update target network periodically
             if (episode + 1) % self.config['target_update_frequency'] == 0:

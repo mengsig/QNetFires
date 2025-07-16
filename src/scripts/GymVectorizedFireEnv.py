@@ -267,9 +267,9 @@ class OptimizedGymVectorizedFireEnv:
         """Reset all environments and return initial observations."""
         self.environment_resets += 1
         
-        # Optionally reshuffle environments for diversity
-        if self.environment_resets % 10 == 0:  # Every 10 resets
-            self._reshuffle_environments()
+        # Randomly reshuffle environments at EVERY reset for maximum diversity
+        print(f"🔄 Episode {self.environment_resets}: Randomly selecting {self.num_parallel_envs} environments from {self.total_available_landscapes} landscapes")
+        self._reshuffle_environments()
         
         # SyncVectorEnv.reset() returns (observations, infos) tuple
         observations, infos = self.vector_env.reset(**kwargs)
@@ -303,9 +303,7 @@ class OptimizedGymVectorizedFireEnv:
         return observations, rewards, dones, infos
     
     def _reshuffle_environments(self):
-        """Reshuffle environment assignments for better diversity."""
-        print("🔄 Reshuffling environments for better diversity...")
-        
+        """Reshuffle environment assignments for maximum diversity every episode."""
         # Select new random environments
         new_indices = self._select_random_environments()
         
@@ -329,23 +327,41 @@ class OptimizedGymVectorizedFireEnv:
         # Initialize new SyncVectorEnv
         self.vector_env = SyncVectorEnv(env_fns)
         
-        # Update selected indices
+        # Update selected indices and performance stats
         self.selected_landscape_indices = new_indices
         self.performance_stats['environments_used'].extend(new_indices)
         
-        print(f"   - New landscape indices: {new_indices}")
+        # Log the selection
+        print(f"   - Selected landscapes: {new_indices}")
+        unique_landscapes = len(set(self.performance_stats['environments_used']))
+        print(f"   - Unique landscapes used so far: {unique_landscapes}/{self.total_available_landscapes}")
     
     def get_performance_stats(self) -> Dict:
-        """Get performance statistics."""
+        """Get performance statistics with enhanced environment diversity tracking."""
+        environments_used = self.performance_stats['environments_used']
+        unique_environments = set(environments_used)
+        
+        # Calculate environment usage frequency
+        usage_frequency = {}
+        for env_idx in environments_used:
+            usage_frequency[env_idx] = usage_frequency.get(env_idx, 0) + 1
+        
+        # Calculate diversity metrics
+        diversity_percentage = (len(unique_environments) / self.total_available_landscapes) * 100
+        
         return {
             'total_episodes': self.performance_stats['total_episodes'],
             'total_steps': self.total_steps,
             'average_reward': self.performance_stats['average_reward'],
             'environment_resets': self.environment_resets,
-            'unique_environments_used': len(set(self.performance_stats['environments_used'])),
+            'unique_environments_used': len(unique_environments),
+            'diversity_percentage': diversity_percentage,
+            'environment_usage_frequency': usage_frequency,
             'current_landscape_indices': self.selected_landscape_indices,
             'num_parallel_envs': self.num_parallel_envs,
-            'total_available_landscapes': self.total_available_landscapes
+            'total_available_landscapes': self.total_available_landscapes,
+            'environments_per_episode': self.num_parallel_envs,
+            'total_environment_selections': len(environments_used)
         }
     
     def close(self):
