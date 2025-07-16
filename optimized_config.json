@@ -1,0 +1,43 @@
+{
+  "raster_dir": "cropped_raster",
+  "grid_size": 50,
+  "input_channels": 12,
+  "num_landscapes": 20,
+  
+  "num_episodes": 200,
+  "num_parallel_envs": 8,
+  "steps_per_episode": 50,
+  "train_frequency": 4,
+  "collection_batch_size": 32,
+  
+  "memory_simulations": 50,
+  "pretrain_steps": 50,
+  "fire_simulation_max_duration": 120,
+  
+  "learning_rate": 1e-4,
+  "gamma": 0.95,
+  "initial_epsilon": 1.0,
+  "epsilon_min": 0.01,
+  "epsilon_decay": 0.995,
+  "buffer_size": 50000,
+  "batch_size": 32,
+  
+  "target_update_frequency": 10,
+  "checkpoint_frequency": 10,
+  
+  "output_dir": "optimized_outputs",
+  "regenerate_memories": true,
+  
+  "comments": {
+    "optimizations": [
+      "Reduced model size (hidden layers by factor of 2)",
+      "Uses gym.vector.SyncVectorEnv for proper parallelization",
+      "Random environment sampling from all available landscapes",
+      "Reduced buffer size for memory efficiency (50k vs 100k)",
+      "Reduced memory simulations for faster initialization (50 vs 100)",
+      "Optimized number of parallel environments (8 vs 10)",
+      "Added proper memory cleanup and GPU management",
+      "Added memory usage tracking and performance monitoring"
+    ]
+  }
+}
