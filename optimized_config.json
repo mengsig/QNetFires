@@ -26,7 +26,6 @@
   "checkpoint_frequency": 10,
   
   "output_dir": "optimized_outputs",
-  "random_seed": 42,
   "regenerate_memories": true,
   
   "comments": {

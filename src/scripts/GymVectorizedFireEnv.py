@@ -247,20 +247,30 @@ class OptimizedGymVectorizedFireEnv:
         print(f"   - Selected landscape indices: {self.selected_landscape_indices}")
     
     def _select_random_environments(self) -> List[int]:
-        """Randomly select environments from available landscapes."""
+        """Randomly select environments from available landscapes with time-based seeding."""
+        print(f"🎲 Selecting {self.num_parallel_envs} environments from {self.total_available_landscapes} available landscapes")
+        
+        # Use time-based seeding for truly random environment selection
+        import time
+        time_seed = int(time.time() * 1000000) % 2**32  # Use microseconds for better randomness
+        env_random = random.Random(time_seed)
+        
         if self.num_parallel_envs <= self.total_available_landscapes:
             # If we have enough landscapes, sample without replacement
-            selected_indices = random.sample(
+            selected_indices = env_random.sample(
                 range(self.total_available_landscapes), 
                 self.num_parallel_envs
             )
+            print(f"   - Using sampling without replacement")
         else:
             # If we need more environments than available landscapes, sample with replacement
             selected_indices = [
-                random.randint(0, self.total_available_landscapes - 1)
+                env_random.randint(0, self.total_available_landscapes - 1)
                 for _ in range(self.num_parallel_envs)
             ]
+            print(f"   - Using sampling with replacement")
         
+        print(f"   - Selected indices: {selected_indices}")
         return selected_indices
     
     def reset(self, **kwargs):
@@ -269,7 +279,19 @@ class OptimizedGymVectorizedFireEnv:
         
         # Randomly reshuffle environments at EVERY reset for maximum diversity
         print(f"🔄 Episode {self.environment_resets}: Randomly selecting {self.num_parallel_envs} environments from {self.total_available_landscapes} landscapes")
+        
+        # Store previous selection for comparison
+        previous_selection = getattr(self, 'selected_landscape_indices', None)
+        
+        # Reshuffle environments
         self._reshuffle_environments()
+        
+        # Verify that environments actually changed
+        if previous_selection is not None:
+            if self.selected_landscape_indices != previous_selection:
+                print(f"✅ Environment selection changed: {previous_selection} → {self.selected_landscape_indices}")
+            else:
+                print(f"⚠️ Environment selection unchanged: {self.selected_landscape_indices}")
         
         # SyncVectorEnv.reset() returns (observations, infos) tuple
         observations, infos = self.vector_env.reset(**kwargs)
@@ -302,6 +324,17 @@ class OptimizedGymVectorizedFireEnv:
         
         return observations, rewards, dones, infos
     
+    def _create_env_function(self, env_id: int, landscape_data: Dict):
+        """Create environment function with proper closure."""
+        def env_fn():
+            return SingleFireEnvWrapper(
+                landscape_data=copy.deepcopy(landscape_data),
+                env_id=env_id,
+                num_simulations=self.num_simulations,
+                max_duration=self.max_duration
+            )
+        return env_fn
+    
     def _reshuffle_environments(self):
         """Reshuffle environment assignments for maximum diversity every episode."""
         # Select new random environments
@@ -310,18 +343,14 @@ class OptimizedGymVectorizedFireEnv:
         # Close current environments
         self.vector_env.close()
         
-        # Create new environment functions
+        # Create new environment functions with proper closure
         env_fns = []
         for i in range(self.num_parallel_envs):
             landscape_idx = new_indices[i]
             landscape_data = self.landscape_data_list[landscape_idx]
             
-            env_fn = lambda idx=i, data=landscape_data: SingleFireEnvWrapper(
-                landscape_data=copy.deepcopy(data),
-                env_id=idx,
-                num_simulations=self.num_simulations,
-                max_duration=self.max_duration
-            )
+            # Use proper function closure to avoid lambda capture issues
+            env_fn = self._create_env_function(i, landscape_data)
             env_fns.append(env_fn)
         
         # Initialize new SyncVectorEnv
