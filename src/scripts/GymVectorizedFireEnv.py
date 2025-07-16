@@ -296,6 +296,9 @@ class OptimizedGymVectorizedFireEnv:
         # SyncVectorEnv.reset() returns (observations, infos) tuple
         observations, infos = self.vector_env.reset(**kwargs)
         
+        # Fix: Ensure observations are properly formatted as arrays
+        observations = self._ensure_observations_are_arrays(observations)
+        
         return observations
     
     def step(self, actions):
@@ -304,6 +307,9 @@ class OptimizedGymVectorizedFireEnv:
         
         # SyncVectorEnv.step() returns 5 values: obs, rewards, terminated, truncated, infos
         observations, rewards, terminated, truncated, infos = self.vector_env.step(actions)
+        
+        # Fix: Ensure observations are properly formatted as arrays
+        observations = self._ensure_observations_are_arrays(observations)
         
         # Combine terminated and truncated into done for backward compatibility
         dones = terminated | truncated
@@ -365,6 +371,29 @@ class OptimizedGymVectorizedFireEnv:
         unique_landscapes = len(set(self.performance_stats['environments_used']))
         print(f"   - Unique landscapes used so far: {unique_landscapes}/{self.total_available_landscapes}")
     
+    def _ensure_observations_are_arrays(self, observations):
+        """Ensure observations are properly formatted as arrays, not dictionaries."""
+        if isinstance(observations, (list, tuple)):
+            processed_observations = []
+            for i, obs in enumerate(observations):
+                if isinstance(obs, dict):
+                    # If observation is a dict, extract the actual array
+                    if 'observation' in obs:
+                        processed_observations.append(obs['observation'])
+                    else:
+                        print(f"⚠️ Warning: Dict observation {i} has no 'observation' key. Keys: {list(obs.keys())}")
+                        # Try to find the array in the dict
+                        array_keys = [k for k, v in obs.items() if hasattr(v, 'shape')]
+                        if array_keys:
+                            processed_observations.append(obs[array_keys[0]])
+                        else:
+                            raise ValueError(f"Cannot extract array from dict observation {i}: {obs}")
+                else:
+                    processed_observations.append(obs)
+            return processed_observations
+        else:
+            return observations
+
     def get_performance_stats(self) -> Dict:
         """Get performance statistics with enhanced environment diversity tracking."""
         environments_used = self.performance_stats['environments_used']
@@ -434,6 +463,9 @@ class OptimizedExperienceCollector:
         if self.current_observations is None:
             self.current_observations = self.vectorized_env.reset()
         
+        # Fix: Ensure observations are properly formatted as arrays
+        self.current_observations = self._ensure_observations_are_arrays(self.current_observations)
+        
         total_reward = 0.0
         episodes_completed = 0
         
@@ -441,11 +473,26 @@ class OptimizedExperienceCollector:
             # Get actions for all environments
             actions = []
             for i, obs in enumerate(self.current_observations):
+                # Debug: Check if observation is in correct format
+                if not hasattr(obs, 'shape'):
+                    print(f"⚠️ Warning: Observation {i} has no shape attribute. Type: {type(obs)}")
+                    if isinstance(obs, dict):
+                        print(f"   Dict keys: {list(obs.keys())}")
+                        # Try to extract array from dict if it's wrapped
+                        if 'observation' in obs:
+                            obs = obs['observation']
+                        else:
+                            print(f"   Cannot extract array from dict observation!")
+                            continue
+                
                 action = self.agent.act(obs)
                 actions.append(action)
             
             # Execute actions
             next_observations, rewards, dones, infos = self.vectorized_env.step(actions)
+            
+            # Fix: Ensure next observations are properly formatted as arrays
+            next_observations = self._ensure_observations_are_arrays(next_observations)
             
             # Store experiences
             for i in range(len(actions)):
@@ -488,6 +535,29 @@ class OptimizedExperienceCollector:
             'environments_reset': env_stats['environment_resets'],
             'performance_stats': env_stats
         }
+    
+    def _ensure_observations_are_arrays(self, observations):
+        """Ensure observations are properly formatted as arrays, not dictionaries."""
+        if isinstance(observations, (list, tuple)):
+            processed_observations = []
+            for i, obs in enumerate(observations):
+                if isinstance(obs, dict):
+                    # If observation is a dict, extract the actual array
+                    if 'observation' in obs:
+                        processed_observations.append(obs['observation'])
+                    else:
+                        print(f"⚠️ Warning: Dict observation {i} has no 'observation' key. Keys: {list(obs.keys())}")
+                        # Try to find the array in the dict
+                        array_keys = [k for k, v in obs.items() if hasattr(v, 'shape')]
+                        if array_keys:
+                            processed_observations.append(obs[array_keys[0]])
+                        else:
+                            raise ValueError(f"Cannot extract array from dict observation {i}: {obs}")
+                else:
+                    processed_observations.append(obs)
+            return processed_observations
+        else:
+            return observations
     
     def reset(self):
         """Reset the experience collector."""
