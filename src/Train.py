@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# train_dqn_vec.py
 import os
 import sys
 import random
@@ -8,12 +6,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from collections import deque, namedtuple
-from gym.vector import AsyncVectorEnv  # or SyncVectorEnv
+from gym.vector import AsyncVectorEnv
 
 from Env import FuelBreakEnv
 from Model import QNet
 
-# ---------- project path ----------
+# -------- project path hack --------
 script_dir = os.path.dirname(__file__)
 project_root = os.path.abspath(os.path.join(script_dir, os.pardir))
 sys.path.insert(0, project_root)
@@ -44,11 +42,10 @@ class ReplayBuffer:
 def compute_q_loss(model, target_model, batch, gamma, k):
     obs_t = torch.from_numpy(np.stack(batch.obs)).float().to(DEVICE)
     next_obs_t = torch.from_numpy(np.stack(batch.next_obs)).float().to(DEVICE)
-    action_t = torch.from_numpy(np.stack(batch.action)).long().to(DEVICE)  # 0/1
+    action_t = torch.from_numpy(np.stack(batch.action)).long().to(DEVICE)
     reward_t = torch.from_numpy(np.array(batch.reward, dtype=np.float32)).to(DEVICE)
     done_t = torch.from_numpy(np.array(batch.done, dtype=np.uint8)).to(DEVICE)
 
-    B, _, H, W = obs_t.shape
     q_all = model(obs_t)  # (B,H*W)
     act_mask = action_t.bool()
     q_selected = torch.sum(q_all * act_mask.float(), dim=1) / k
@@ -63,24 +60,67 @@ def compute_q_loss(model, target_model, batch, gamma, k):
     return nn.MSELoss()(q_selected, target)
 
 
-# ---------- Vector helpers ----------
-def make_env(rasters, budget, kstep, sims):
+# ---------- Env wrappers ----------
+import gym
+
+
+class AutoResetWrapper(gym.Wrapper):
+    """
+    Auto-resets env when done/truncated is True.
+    Adds keys to info:
+      info["final_observation"] : obs before reset
+      info["episode_return"]    : accumulated reward of finished episode
+      info["episode_length"]    : steps in finished episode
+    """
+
+    def __init__(self, env):
+        super().__init__(env)
+        self._ep_ret = 0.0
+        self._ep_len = 0
+
+    def reset(self, **kwargs):
+        self._ep_ret = 0.0
+        self._ep_len = 0
+        return self.env.reset(**kwargs)
+
+    def step(self, action):
+        obs, rew, done, trunc, info = self.env.step(action)
+        self._ep_ret += float(rew)
+        self._ep_len += 1
+
+        if done or trunc:
+            info = dict(info)  # copy
+            info["final_observation"] = obs
+            info["episode_return"] = self._ep_ret
+            info["episode_length"] = self._ep_len
+            obs, _ = self.env.reset()
+            self._ep_ret = 0.0
+            self._ep_len = 0
+
+        return obs, rew, done, trunc, info
+
+
+def make_env(rasters, budget, kstep, sims, seed):
     def _thunk():
-        return FuelBreakEnv(
+        env = FuelBreakEnv(
             rasters,
             break_budget=budget,
             break_step=kstep,
             num_simulations=sims,
+            seed=seed,
         )
+        # wrap to auto-reset
+        env = AutoResetWrapper(env)
+        return env
 
     return _thunk
 
 
-def choose_actions_batch(model, obs_np, k, eps, invalid_masks=None):
+# ---------- Action helper ----------
+def choose_actions_batch(model, obs_np, k, eps):
     """
     obs_np: (N,C,H,W)
-    invalid_masks: (N,H,W) bool or None
-    Returns actions: (N,H*W) int8
+    returns actions: (N,H*W) int8
     """
     N, C, H, W = obs_np.shape
     HxW = H * W
@@ -91,77 +131,57 @@ def choose_actions_batch(model, obs_np, k, eps, invalid_masks=None):
 
     for i in range(N):
         if random.random() < eps:
-            cand = np.arange(HxW)
-            if invalid_masks is not None:
-                cand = cand[~invalid_masks[i].flatten()]
-            idx = np.random.choice(cand, size=min(k, cand.size), replace=False)
+            idx = np.random.choice(HxW, size=k, replace=False)
         else:
             qi = q_all[i]
-            if invalid_masks is not None:
-                qi = qi.copy()
-                qi[invalid_masks[i].flatten()] = -1e9
             idx = np.argpartition(qi, -k)[-k:]
         actions[i, idx] = 1
-
     return actions
-
-
-def extract_invalid_masks(infos, key="invalid_mask"):
-    if not infos or key not in infos[0]:
-        return None
-    return np.stack([info[key] for info in infos], axis=0)
-
-
-def squash_rewards(rewards, n_envs, reduce="sum"):
-    """Ensure rewards -> (n_envs,)"""
-    rewards = np.asarray(rewards)
-    if rewards.shape == (n_envs,):
-        return rewards
-    # try reshape
-    if rewards.size % n_envs != 0:
-        raise ValueError(
-            f"Rewards shape {rewards.shape} cannot be reshaped to (n_envs, -1)"
-        )
-    rewards = rewards.reshape(n_envs, -1)
-    if reduce == "sum":
-        return rewards.sum(axis=1)
-    elif reduce == "mean":
-        return rewards.mean(axis=1)
-    elif reduce == "max":
-        return rewards.max(axis=1)
-    else:
-        raise ValueError(f"Unknown reduce '{reduce}'")
 
 
 # ---------- main ----------
 def main():
     # Hyperparams
-    EPISODES = 500
-    STEPS_PER_EP = 50  # steps per meta-episode
-    BUFFER_CAP = 50_000
-    BATCH_SIZE = 64
-    GAMMA = 0.99
-    LR = 1e-4
-    START_EPS = 1.0
-    END_EPS = 0.05
-    EPS_DECAY_STEPS = 50_000
-    TARGET_SYNC_EVERY = 1000
-    SAVE_EVERY = 10
+    EPISODES = 500  # Outer training loops ("meta-episodes"); each runs STEPS_PER_EP interaction steps
+    STEPS_PER_EP = 5  # Env interaction steps per meta-episode (each step advances ALL N_ENVS envs once)
+    BUFFER_CAP = 50_000  # Max number of transitions kept in the replay buffer (old ones are dropped FIFO)
+    BATCH_SIZE = (
+        16  # How many transitions you sample from the buffer for one gradient update
+    )
+    GAMMA = 0.99  # Discount factor for future rewards in the Bellman target
+    LR = 1e-4  # Learning rate for the optimizer (Adam here)
+    START_EPS = 1.0  # Initial epsilon for ε-greedy action selection (full exploration)
+    END_EPS = 0.05  # Final/minimum epsilon after decay (some exploration kept)
+    EPS_DECAY_STEPS = 50_000  # Number of env-steps (sum over all envs) to anneal epsilon from START_EPS to END_EPS
+    TARGET_SYNC_EVERY = (
+        1000  # How many env-steps between copying online net weights to the target net
+    )
+    SAVE_EVERY = 10  # Save a model checkpoint every this many meta-episodes
 
-    # Vector env params
-    N_ENVS = 16
-    BUDGET = 100
-    K_STEPS = 5
-    SIMS = 25
+    # Vectorized env parameters
+    N_ENVS = (
+        16  # Number of environments run in parallel (processes with AsyncVectorEnv)
+    )
+    BUDGET = 100  # FuelBreakEnv: total number of cells you’re allowed to place across an episode
+    K_STEPS = 10  # FuelBreakEnv: how many new fuel-break cells you can place per step (action size)
+    SIMS = 25  # FuelBreakEnv: number of Monte-Carlo fire simulations per step to estimate reward
 
-    # Build envs
-    raster_dict = load_all_rasters("cropped_raster", 1)
-    raster_sets = [raster_dict] * N_ENVS  # replace with your list of different rasters
-    env_fns = [make_env(r, BUDGET, K_STEPS, SIMS) for i, r in enumerate(raster_sets)]
-    vec_env = AsyncVectorEnv(env_fns)
+    # Build many rasters; adjust to your paths
+    raster_sets = [load_all_rasters("cropped_raster", i) for i in range(N_ENVS)]
 
-    obs, _ = vec_env.reset()  # (N,C,H,W)
-    N, C, H, W = obs.shape
+    env_fns = [
+        make_env(r, BUDGET, K_STEPS, SIMS, seed=i) for i, r in enumerate(raster_sets)
+    ]
+    vec_env = AsyncVectorEnv(env_fns)  # stays async
+
+    # NOTE: new gym/gymnasium returns (obs, info) on reset; old returns just obs.
+    reset_out = vec_env.reset()
+    if isinstance(reset_out, tuple) and len(reset_out) == 2:
+        obs, _ = reset_out
+    else:
+        obs = reset_out
+    N_ENVS = obs.shape[0]
+    _, C, H, W = obs.shape
 
     model = QNet(H, W).to(DEVICE)
     target_model = QNet(H, W).to(DEVICE)
@@ -173,51 +193,46 @@ def main():
     global_step = 0
     eps = START_EPS
 
-    ep_returns = np.zeros(N_ENVS, dtype=np.float32)
-    ep_lengths = np.zeros(N_ENVS, dtype=np.int32)
+    # rolling stats
+    loss_window = deque(maxlen=1000)
 
     for meta_ep in range(1, EPISODES + 1):
         print(f"META-EP: {meta_ep}/{EPISODES}")
+
         for step in range(STEPS_PER_EP):
-            print(f"{step}/{STEPS_PER_EP}", end="\r", flush=True)
+            print(f"{step}/{STEPS_PER_EP}")
+            actions = choose_actions_batch(model, obs, K_STEPS, eps)
 
-            # invalid masks from previous infos (None on first step)
-            invalid_masks = extract_invalid_masks(
-                globals().get("infos", None), "invalid_mask"
-            )
+            # async step
+            vec_env.step_async(actions)
+            step_out = vec_env.step_wait()
+            # handle both 4 and 5 return values
+            if len(step_out) == 5:
+                next_obs, rewards, dones, truncs, infos = step_out
+                dones = np.logical_or(dones, truncs)
+            else:
+                next_obs, rewards, dones, infos = step_out
 
-            actions = choose_actions_batch(model, obs, K_STEPS, eps, invalid_masks)
-            next_obs, rewards, dones, _, infos = vec_env.step(actions)
-
-            # --- FIX REWARDS SHAPE HERE ---
-            rewards = squash_rewards(rewards, N_ENVS, reduce="sum")
+            rewards = np.asarray(rewards, dtype=np.float32)
+            if rewards.shape != (N_ENVS,):
+                rewards = rewards.reshape(N_ENVS, -1).sum(axis=1)
+            dones = np.asarray(dones, dtype=bool)
 
             # store transitions
             for i in range(N_ENVS):
                 buffer.push(obs[i], actions[i], rewards[i], next_obs[i], dones[i])
 
-            ep_returns += rewards
-            ep_lengths += 1
-
-            # reset finished envs
-            if np.any(dones):
-                try:
-                    resets = vec_env.reset_done(dones)  # gym>=0.26
-                except AttributeError:
-                    idxs = np.where(dones)[0].tolist()
-                    resets = vec_env.reset(indices=idxs)
-                next_obs[dones] = resets
-
-                finished = np.where(dones)[0]
-                for i in finished:
-                    print(f"[env {i}] return={ep_returns[i]:.3f} len={ep_lengths[i]}")
-                    ep_returns[i] = 0.0
-                    ep_lengths[i] = 0
+                # If auto-reset happened, infos[i] may contain episode stats
+                info_i = infos[i] if isinstance(infos, (list, tuple)) else infos
+                if info_i and "episode_return" in info_i:
+                    print(
+                        f"[env {i}] return={info_i['episode_return']:.3f} len={info_i['episode_length']}"
+                    )
 
             obs = next_obs
             global_step += N_ENVS
 
-            # eps decay
+            # epsilon decay
             frac = min(1.0, global_step / EPS_DECAY_STEPS)
             eps = START_EPS - (START_EPS - END_EPS) * frac
 
@@ -229,11 +244,15 @@ def main():
                 loss.backward()
                 optimizer.step()
 
+                loss_window.append(loss.item())
+
                 if global_step % TARGET_SYNC_EVERY == 0:
                     target_model.load_state_dict(model.state_dict())
 
+        mean_loss = float(np.mean(loss_window)) if loss_window else float("nan")
         print(
-            f"[MetaEp {meta_ep}] steps={STEPS_PER_EP * N_ENVS} eps={eps:.3f} buffer={len(buffer)}"
+            f"[MetaEp {meta_ep}] steps={STEPS_PER_EP * N_ENVS} eps={eps:.3f} "
+            f"buffer={len(buffer)} mean_loss={mean_loss:.4f}"
         )
 
         if meta_ep % SAVE_EVERY == 0:

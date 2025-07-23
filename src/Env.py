@@ -15,7 +15,9 @@ class FuelBreakEnv(gym.Env):
 
     metadata = {"render.modes": []}
 
-    def __init__(self, raster, break_budget, break_step=None, num_simulations=10):
+    def __init__(
+        self, raster, break_budget, break_step=None, num_simulations=10, seed=None
+    ):
         super().__init__()
 
         # store arrays for the simulator (NEVER zero these)
