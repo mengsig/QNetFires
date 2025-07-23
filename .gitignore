@@ -9,3 +9,6 @@ DomiRank/
 pyretechnics/
 cropped_raster/
 rasters_raw/
+checkpoints/
+viz_out/
+

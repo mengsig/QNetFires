@@ -1,4 +1,5 @@
-# train_dqn.py
+#!/usr/bin/env python3
+# train_dqn_vec.py
 import os
 import sys
 import random
@@ -7,19 +8,23 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from collections import deque, namedtuple
+from gym.vector import AsyncVectorEnv  # or SyncVectorEnv
 
 from Env import FuelBreakEnv
 from Model import QNet
 
+# ---------- project path ----------
 script_dir = os.path.dirname(__file__)
 project_root = os.path.abspath(os.path.join(script_dir, os.pardir))
 sys.path.insert(0, project_root)
-from src.utils.loadingUtils import load_all_rasters
+from src.utils.loadingUtils import load_all_rasters  # noqa: E402
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 Transition = namedtuple("Transition", "obs action reward next_obs done")
+print(f"Using device {DEVICE}...")
 
 
+# ---------- Replay Buffer ----------
 class ReplayBuffer:
     def __init__(self, capacity=100_000):
         self.buf = deque(maxlen=capacity)
@@ -35,31 +40,8 @@ class ReplayBuffer:
         return len(self.buf)
 
 
-def choose_action_eps_greedy(model, obs_np, k, eps, invalid_mask=None):
-    """Return MultiBinary vector of length H*W with exactly k ones."""
-    HxW = obs_np.shape[-2] * obs_np.shape[-1]
-    if random.random() < eps:
-        # random K among still-valid
-        cand = np.arange(HxW)
-        if invalid_mask is not None:
-            cand = cand[~invalid_mask.flatten()]
-        idx = np.random.choice(cand, size=min(k, cand.size), replace=False)
-        act = np.zeros(HxW, dtype=np.int8)
-        act[idx] = 1
-        return act
-    with torch.no_grad():
-        q = model(torch.from_numpy(obs_np).unsqueeze(0).to(DEVICE))  # (1, H*W)
-        q = q.squeeze(0).cpu().numpy()  # (H*W,)
-        if invalid_mask is not None:
-            q[invalid_mask.flatten()] = -1e9
-        idx = np.argpartition(q, -k)[-k:]
-        act = np.zeros(HxW, dtype=np.int8)
-        act[idx] = 1
-        return act
-
-
+# ---------- Loss ----------
 def compute_q_loss(model, target_model, batch, gamma, k):
-    # shapes: obs: (B,C,H,W), action: (B,H*W), reward: (B,), next_obs: (B,C,H,W)
     obs_t = torch.from_numpy(np.stack(batch.obs)).float().to(DEVICE)
     next_obs_t = torch.from_numpy(np.stack(batch.next_obs)).float().to(DEVICE)
     action_t = torch.from_numpy(np.stack(batch.action)).long().to(DEVICE)  # 0/1
@@ -67,29 +49,95 @@ def compute_q_loss(model, target_model, batch, gamma, k):
     done_t = torch.from_numpy(np.array(batch.done, dtype=np.uint8)).to(DEVICE)
 
     B, _, H, W = obs_t.shape
-    HxW = H * W
-
     q_all = model(obs_t)  # (B,H*W)
-    # gather selected k cells’ Qs -> mean to get one scalar per transition
     act_mask = action_t.bool()
     q_selected = torch.sum(q_all * act_mask.float(), dim=1) / k
 
     with torch.no_grad():
-        # Double DQN
-        next_q_all = model(next_obs_t)  # online
-        best_idx = torch.argmax(next_q_all, dim=1)  # (B,)
-        target_q_all = target_model(next_obs_t)  # target
-        next_q = target_q_all.gather(1, best_idx.unsqueeze(1)).squeeze(1)
+        next_q_all_online = model(next_obs_t)
+        best_idx = torch.argmax(next_q_all_online, dim=1)
+        next_q_all_target = target_model(next_obs_t)
+        next_q = next_q_all_target.gather(1, best_idx.unsqueeze(1)).squeeze(1)
         target = reward_t + gamma * (1 - done_t.float()) * next_q
 
-    loss = nn.MSELoss()(q_selected, target)
-    return loss
+    return nn.MSELoss()(q_selected, target)
 
 
+# ---------- Vector helpers ----------
+def make_env(rasters, budget, kstep, sims):
+    def _thunk():
+        return FuelBreakEnv(
+            rasters,
+            break_budget=budget,
+            break_step=kstep,
+            num_simulations=sims,
+        )
+
+    return _thunk
+
+
+def choose_actions_batch(model, obs_np, k, eps, invalid_masks=None):
+    """
+    obs_np: (N,C,H,W)
+    invalid_masks: (N,H,W) bool or None
+    Returns actions: (N,H*W) int8
+    """
+    N, C, H, W = obs_np.shape
+    HxW = H * W
+    actions = np.zeros((N, HxW), dtype=np.int8)
+
+    with torch.no_grad():
+        q_all = model(torch.from_numpy(obs_np).to(DEVICE)).cpu().numpy()  # (N,H*W)
+
+    for i in range(N):
+        if random.random() < eps:
+            cand = np.arange(HxW)
+            if invalid_masks is not None:
+                cand = cand[~invalid_masks[i].flatten()]
+            idx = np.random.choice(cand, size=min(k, cand.size), replace=False)
+        else:
+            qi = q_all[i]
+            if invalid_masks is not None:
+                qi = qi.copy()
+                qi[invalid_masks[i].flatten()] = -1e9
+            idx = np.argpartition(qi, -k)[-k:]
+        actions[i, idx] = 1
+
+    return actions
+
+
+def extract_invalid_masks(infos, key="invalid_mask"):
+    if not infos or key not in infos[0]:
+        return None
+    return np.stack([info[key] for info in infos], axis=0)
+
+
+def squash_rewards(rewards, n_envs, reduce="sum"):
+    """Ensure rewards -> (n_envs,)"""
+    rewards = np.asarray(rewards)
+    if rewards.shape == (n_envs,):
+        return rewards
+    # try reshape
+    if rewards.size % n_envs != 0:
+        raise ValueError(
+            f"Rewards shape {rewards.shape} cannot be reshaped to (n_envs, -1)"
+        )
+    rewards = rewards.reshape(n_envs, -1)
+    if reduce == "sum":
+        return rewards.sum(axis=1)
+    elif reduce == "mean":
+        return rewards.mean(axis=1)
+    elif reduce == "max":
+        return rewards.max(axis=1)
+    else:
+        raise ValueError(f"Unknown reduce '{reduce}'")
+
+
+# ---------- main ----------
 def main():
-    # ----- Hyperparams -----
+    # Hyperparams
     EPISODES = 500
-    STEPS_PER_EP = 100  # or env.break_budget // env.break_step
+    STEPS_PER_EP = 50  # steps per meta-episode
     BUFFER_CAP = 50_000
     BATCH_SIZE = 64
     GAMMA = 0.99
@@ -99,14 +147,22 @@ def main():
     EPS_DECAY_STEPS = 50_000
     TARGET_SYNC_EVERY = 1000
     SAVE_EVERY = 10
-    K_STEPS = None  # set later from env.break_step
 
-    # ----- Env / Model -----
+    # Vector env params
+    N_ENVS = 16
+    BUDGET = 100
+    K_STEPS = 5
+    SIMS = 25
+
+    # Build envs
     raster_dict = load_all_rasters("cropped_raster", 1)
-    env = FuelBreakEnv(raster_dict, break_budget=100, break_step=5, num_simulations=10)
-    K_STEPS = env.break_step
+    raster_sets = [raster_dict] * N_ENVS  # replace with your list of different rasters
+    env_fns = [make_env(r, BUDGET, K_STEPS, SIMS) for i, r in enumerate(raster_sets)]
+    vec_env = AsyncVectorEnv(env_fns)
 
-    C, H, W = env.observation_space.shape
+    obs, _ = vec_env.reset()  # (N,C,H,W)
+    N, C, H, W = obs.shape
+
     model = QNet(H, W).to(DEVICE)
     target_model = QNet(H, W).to(DEVICE)
     target_model.load_state_dict(model.state_dict())
@@ -117,29 +173,53 @@ def main():
     global_step = 0
     eps = START_EPS
 
-    for ep in range(1, EPISODES + 1):
-        obs, _ = env.reset()
-        ep_reward = 0.0
-        done = False
+    ep_returns = np.zeros(N_ENVS, dtype=np.float32)
+    ep_lengths = np.zeros(N_ENVS, dtype=np.int32)
 
+    for meta_ep in range(1, EPISODES + 1):
+        print(f"META-EP: {meta_ep}/{EPISODES}")
         for step in range(STEPS_PER_EP):
-            # mask out already chosen cells (zeros in obs channels? or env._break_mask)
-            invalid_mask = env._break_mask  # bool (H,W)
+            print(f"{step}/{STEPS_PER_EP}", end="\r", flush=True)
 
-            action = choose_action_eps_greedy(model, obs, K_STEPS, eps, invalid_mask)
-            next_obs, reward, done, _, info = env.step(action)
+            # invalid masks from previous infos (None on first step)
+            invalid_masks = extract_invalid_masks(
+                globals().get("infos", None), "invalid_mask"
+            )
 
-            buffer.push(obs, action, reward, next_obs, done)
-            ep_reward += reward
+            actions = choose_actions_batch(model, obs, K_STEPS, eps, invalid_masks)
+            next_obs, rewards, dones, _, infos = vec_env.step(actions)
+
+            # --- FIX REWARDS SHAPE HERE ---
+            rewards = squash_rewards(rewards, N_ENVS, reduce="sum")
+
+            # store transitions
+            for i in range(N_ENVS):
+                buffer.push(obs[i], actions[i], rewards[i], next_obs[i], dones[i])
+
+            ep_returns += rewards
+            ep_lengths += 1
+
+            # reset finished envs
+            if np.any(dones):
+                try:
+                    resets = vec_env.reset_done(dones)  # gym>=0.26
+                except AttributeError:
+                    idxs = np.where(dones)[0].tolist()
+                    resets = vec_env.reset(indices=idxs)
+                next_obs[dones] = resets
+
+                finished = np.where(dones)[0]
+                for i in finished:
+                    print(f"[env {i}] return={ep_returns[i]:.3f} len={ep_lengths[i]}")
+                    ep_returns[i] = 0.0
+                    ep_lengths[i] = 0
 
             obs = next_obs
-            global_step += 1
+            global_step += N_ENVS
 
-            # epsilon decay
-            eps = max(
-                END_EPS,
-                START_EPS - (START_EPS - END_EPS) * (global_step / EPS_DECAY_STEPS),
-            )
+            # eps decay
+            frac = min(1.0, global_step / EPS_DECAY_STEPS)
+            eps = START_EPS - (START_EPS - END_EPS) * frac
 
             # optimize
             if len(buffer) >= BATCH_SIZE:
@@ -149,18 +229,16 @@ def main():
                 loss.backward()
                 optimizer.step()
 
-                # target net sync
                 if global_step % TARGET_SYNC_EVERY == 0:
                     target_model.load_state_dict(model.state_dict())
 
-            if done:
-                break
+        print(
+            f"[MetaEp {meta_ep}] steps={STEPS_PER_EP * N_ENVS} eps={eps:.3f} buffer={len(buffer)}"
+        )
 
-        print(f"[Ep {ep}] reward={ep_reward:.4f} eps={eps:.3f} steps={step + 1}")
-
-        if ep % SAVE_EVERY == 0:
+        if meta_ep % SAVE_EVERY == 0:
             os.makedirs("checkpoints", exist_ok=True)
-            torch.save(model.state_dict(), f"checkpoints/qnet_ep{ep}.pt")
+            torch.save(model.state_dict(), f"checkpoints/qnet_ep{meta_ep}.pt")
 
     torch.save(model.state_dict(), "checkpoints/qnet_final.pt")
     print("Training finished.")

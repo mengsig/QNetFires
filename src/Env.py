@@ -37,7 +37,6 @@ class FuelBreakEnv(gym.Env):
             self.break_step = break_budget // 5
         else:
             self.break_step = break_step
-        print(self.break_step)
         self.num_simulations = num_simulations
 
         zero = np.zeros((H, W), dtype=np.float32)
@@ -91,14 +90,6 @@ class FuelBreakEnv(gym.Env):
         super().reset(seed=seed)
         self._build_sim()
         self._break_mask = np.zeros((self.H, self.W), dtype=bool)
-        self._steps_used = 0
-        self._last_burned = None  # for incremental reward
-        return self._make_obs(), {}
-
-    def reset(self, *, seed=None, options=None):
-        super().reset(seed=seed)
-        self._build_sim()
-        self._break_mask = np.zeros((self.H, self.W), dtype=bool)
         self._used = 0
         self._last_burned = None  # for incremental reward
         return self._make_obs(), {}
@@ -119,7 +110,6 @@ class FuelBreakEnv(gym.Env):
         # apply them
         self._break_mask.flat[new_cells] = True
         self._used += new_cells.size
-        print(self._break_mask.sum())
 
         # simulate to get incremental reward
         self.sim.set_fuel_breaks(self._break_mask)
