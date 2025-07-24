@@ -111,6 +111,8 @@ class Simulate:
         self.burned = self.output_matrices["fire_type"].astype(np.float32)
 
     def run_many_simulations(self, num_simulations):
+        import gc
+        
         for i in range(num_simulations):
             xcord = np.random.randint(0, self.slope.shape[0])
             ycord = np.random.randint(0, self.slope.shape[1])
@@ -124,6 +126,11 @@ class Simulate:
                     np.float32
                 )
             self.average_acres_burned += self.acres_burned
+            
+            # Clean up memory periodically
+            if i % 5 == 0:
+                gc.collect()
+                
         assert num_simulations != 0
         self.burned_mean /= num_simulations
         self.average_acres_burned /= num_simulations

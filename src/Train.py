@@ -62,6 +62,12 @@ def compute_q_loss(model, target_model, batch, gamma, k):
 
 # ---------- Env wrappers ----------
 import gym
+import traceback
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class AutoResetWrapper(gym.Wrapper):
@@ -84,20 +90,33 @@ class AutoResetWrapper(gym.Wrapper):
         return self.env.reset(**kwargs)
 
     def step(self, action):
-        obs, rew, done, trunc, info = self.env.step(action)
-        self._ep_ret += float(rew)
-        self._ep_len += 1
+        try:
+            obs, rew, done, trunc, info = self.env.step(action)
+            self._ep_ret += float(rew)
+            self._ep_len += 1
 
-        if done or trunc:
-            info = dict(info)  # copy
-            info["final_observation"] = obs
-            info["episode_return"] = self._ep_ret
-            info["episode_length"] = self._ep_len
-            obs, _ = self.env.reset()
-            self._ep_ret = 0.0
-            self._ep_len = 0
+            if done or trunc:
+                info = dict(info)  # copy
+                info["final_observation"] = obs
+                info["episode_return"] = self._ep_ret
+                info["episode_length"] = self._ep_len
+                obs, _ = self.env.reset()
+                self._ep_ret = 0.0
+                self._ep_len = 0
 
-        return obs, rew, done, trunc, info
+            return obs, rew, done, trunc, info
+        except Exception as e:
+            logger.error(f"Error in environment step: {e}")
+            logger.error(traceback.format_exc())
+            # Try to reset the environment
+            try:
+                obs, _ = self.env.reset()
+                self._ep_ret = 0.0
+                self._ep_len = 0
+                return obs, 0.0, True, False, {"error": str(e)}
+            except Exception as reset_e:
+                logger.error(f"Failed to reset environment: {reset_e}")
+                raise e
 
 
 def make_env(rasters, budget, kstep, sims, seed):
@@ -203,20 +222,83 @@ def main():
             print(f"{step}/{STEPS_PER_EP}")
             actions = choose_actions_batch(model, obs, K_STEPS, eps)
 
-            # async step
-            vec_env.step_async(actions)
-            step_out = vec_env.step_wait()
-            # handle both 4 and 5 return values
-            if len(step_out) == 5:
-                next_obs, rewards, dones, truncs, infos = step_out
-                dones = np.logical_or(dones, truncs)
-            else:
-                next_obs, rewards, dones, infos = step_out
+            # async step with error handling
+            try:
+                import signal
+                
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("Environment step timed out")
+                
+                # Set timeout for environment step (30 seconds)
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(30)
+                
+                vec_env.step_async(actions)
+                step_out = vec_env.step_wait()
+                
+                # Cancel the timeout
+                signal.alarm(0)
+                
+                # handle both 4 and 5 return values
+                if len(step_out) == 5:
+                    next_obs, rewards, dones, truncs, infos = step_out
+                    dones = np.logical_or(dones, truncs)
+                else:
+                    next_obs, rewards, dones, infos = step_out
 
-            rewards = np.asarray(rewards, dtype=np.float32)
-            if rewards.shape != (N_ENVS,):
-                rewards = rewards.reshape(N_ENVS, -1).sum(axis=1)
-            dones = np.asarray(dones, dtype=bool)
+                rewards = np.asarray(rewards, dtype=np.float32)
+                if rewards.shape != (N_ENVS,):
+                    rewards = rewards.reshape(N_ENVS, -1).sum(axis=1)
+                dones = np.asarray(dones, dtype=bool)
+                
+            except (EOFError, TimeoutError) as e:
+                # Cancel any pending timeout
+                try:
+                    signal.alarm(0)
+                except:
+                    pass
+                    
+                logger.error(f"Error in vectorized environment at step {step}: {e}")
+                if isinstance(e, EOFError):
+                    logger.error("One or more worker processes crashed.")
+                else:
+                    logger.error("Environment step timed out.")
+                logger.error("Recreating environment...")
+                
+                # Close the current environment
+                try:
+                    vec_env.close()
+                except:
+                    pass
+                
+                # Recreate the environment
+                env_fns = [
+                    make_env(r, BUDGET, K_STEPS, SIMS, seed=i) for i, r in enumerate(raster_sets)
+                ]
+                vec_env = AsyncVectorEnv(env_fns)
+                
+                # Reset and get new observations
+                reset_out = vec_env.reset()
+                if isinstance(reset_out, tuple) and len(reset_out) == 2:
+                    obs, _ = reset_out
+                else:
+                    obs = reset_out
+                
+                # Skip this step and continue
+                logger.info("Environment recreated successfully. Continuing training...")
+                continue
+                
+            except Exception as e:
+                # Cancel any pending timeout
+                try:
+                    signal.alarm(0)
+                except:
+                    pass
+                    
+                logger.error(f"Unexpected error in vectorized environment: {e}")
+                logger.error(traceback.format_exc())
+                # Try to continue with current observations
+                continue
 
             # store transitions
             for i in range(N_ENVS):
@@ -258,8 +340,22 @@ def main():
         if meta_ep % SAVE_EVERY == 0:
             os.makedirs("checkpoints", exist_ok=True)
             torch.save(model.state_dict(), f"checkpoints/qnet_ep{meta_ep}.pt")
+        
+        # Periodic memory cleanup
+        if meta_ep % 5 == 0:
+            import gc
+            gc.collect()
+            logger.info(f"Memory cleanup performed after meta-episode {meta_ep}")
 
     torch.save(model.state_dict(), "checkpoints/qnet_final.pt")
+    
+    # Clean up the vectorized environment
+    try:
+        vec_env.close()
+        logger.info("Vectorized environment closed successfully.")
+    except Exception as e:
+        logger.error(f"Error closing vectorized environment: {e}")
+    
     print("Training finished.")
 
 

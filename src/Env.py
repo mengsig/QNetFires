@@ -1,8 +1,12 @@
 import gym
 import numpy as np
+import logging
+import traceback
 from gym import spaces
 from Simulate import Simulate
 
+# Set up logging for the environment
+logger = logging.getLogger(__name__)
 
 class FuelBreakEnv(gym.Env):
     """
@@ -89,51 +93,79 @@ class FuelBreakEnv(gym.Env):
 
     # ---------- gym api ----------
     def reset(self, *, seed=None, options=None):
-        super().reset(seed=seed)
-        self._build_sim()
-        self._break_mask = np.zeros((self.H, self.W), dtype=bool)
-        self._used = 0
-        self._last_burned = None  # for incremental reward
-        return self._make_obs(), {}
+        try:
+            super().reset(seed=seed)
+            self._build_sim()
+            self._break_mask = np.zeros((self.H, self.W), dtype=bool)
+            self._used = 0
+            self._last_burned = None  # for incremental reward
+            return self._make_obs(), {}
+        except Exception as e:
+            logger.error(f"Error in environment reset: {e}")
+            logger.error(traceback.format_exc())
+            # Try to create a minimal working state
+            self._break_mask = np.zeros((self.H, self.W), dtype=bool)
+            self._used = 0
+            self._last_burned = None
+            try:
+                obs = self._make_obs()
+                return obs, {"error": str(e)}
+            except:
+                # Return a zero observation as last resort
+                return np.zeros(self._base.shape, dtype=np.float32), {"error": str(e)}
 
     def step(self, action):
-        action = np.asarray(action, dtype=np.int8).reshape(-1)
-        assert action.size == self.H * self.W
+        try:
+            action = np.asarray(action, dtype=np.int8).reshape(-1)
+            assert action.size == self.H * self.W
 
-        # only allow k new placements this step
-        new_cells = np.flatnonzero(action)
-        # drop already-broken cells
-        new_cells = new_cells[~self._break_mask.flat[new_cells]]
+            # only allow k new placements this step
+            new_cells = np.flatnonzero(action)
+            # drop already-broken cells
+            new_cells = new_cells[~self._break_mask.flat[new_cells]]
 
-        if new_cells.size > self.break_step:
-            # you can either clip, sample first k, or give negative reward. Here: clip.
-            new_cells = new_cells[: self.break_step]
+            if new_cells.size > self.break_step:
+                # you can either clip, sample first k, or give negative reward. Here: clip.
+                new_cells = new_cells[: self.break_step]
 
-        # apply them
-        self._break_mask.flat[new_cells] = True
-        self._used += new_cells.size
+            # apply them
+            self._break_mask.flat[new_cells] = True
+            self._used += new_cells.size
 
-        # simulate to get incremental reward
-        self.sim.set_fuel_breaks(self._break_mask)
-        self.sim.average_acres_burned = 0
-        self.sim.run_many_simulations(self.num_simulations)
-        burned = self.sim.average_acres_burned
+            # simulate to get incremental reward with error handling
+            try:
+                self.sim.set_fuel_breaks(self._break_mask)
+                self.sim.average_acres_burned = 0
+                self.sim.run_many_simulations(self.num_simulations)
+                burned = self.sim.average_acres_burned
+            except Exception as sim_e:
+                logger.error(f"Simulation error: {sim_e}")
+                logger.error(traceback.format_exc())
+                # Use a fallback burned value
+                burned = self._last_burned if self._last_burned is not None else 0.0
 
-        if self._last_burned is None:
-            # first step, no prior baseline -> 0 shaping or full negative
-            incremental = burned
-        else:
-            incremental = burned - self._last_burned
+            if self._last_burned is None:
+                # first step, no prior baseline -> 0 shaping or full negative
+                incremental = burned
+            else:
+                incremental = burned - self._last_burned
 
-        self._last_burned = burned
+            self._last_burned = burned
 
-        # reward: improvement (negative burned). Example shaping:
-        reward = -incremental / float(self.H * self.W)
+            # reward: improvement (negative burned). Example shaping:
+            reward = -incremental / float(self.H * self.W)
 
-        done = self._used >= self.break_budget
-        obs = self._make_obs()
+            done = self._used >= self.break_budget
+            obs = self._make_obs()
 
-        return obs, reward, done, False, {"burned": burned, "new_cells": new_cells.size}
+            return obs, reward, done, False, {"burned": burned, "new_cells": new_cells.size}
+            
+        except Exception as e:
+            logger.error(f"Error in environment step: {e}")
+            logger.error(traceback.format_exc())
+            # Return a safe fallback state
+            obs = self._make_obs()
+            return obs, -1.0, True, False, {"error": str(e), "burned": 0, "new_cells": 0}
 
     def render(self, save_string=None):
         import matplotlib.pyplot as plt
