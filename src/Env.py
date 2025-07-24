@@ -53,7 +53,7 @@ class FuelBreakEnv(gym.Env):
         # Order: [slp, asp, cc, fbfm, fn, fe, fs, fw]   (8, H, W)
         slp, asp, dem, cc, cbd, cbh, ch, fbfm = self.raw_args
         fn, fe, fs, fw = self.firelines
-        self._base = np.stack([fbfm, cc, slp, asp, fn, fe, fs, fw], axis=0).astype(
+        self._base = np.stack([slp, asp, dem, cc, cbd, cbh, ch, fn], axis=0).astype(
             np.float32
         )
 
