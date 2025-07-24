@@ -152,4 +152,16 @@ Your enhanced QAgent system is now ready for large-scale wildfire fuel-break pla
 ✅ Use advanced DQN techniques  
 ✅ Save the best performing models  
 
-**Start training with:** `python3 src/Train.py`
+**Start training with:** 
+- `python3 train_sync.py` (recommended for stability)
+- `python3 train_robust.py` (with automatic restart)
+- `python3 src/Train.py` (enhanced with error handling)
+
+### 4. Visualize Results
+```bash
+# Visualize trained model
+python3 src/Visualize.py --ckpt checkpoints/qnet_best.pt --gif
+
+# Use specific model type if needed
+python3 src/Visualize.py --ckpt checkpoints/qnet_best.pt --model_type enhanced --gif
+```

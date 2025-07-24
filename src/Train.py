@@ -514,7 +514,21 @@ def main():
             
             try:
                 vec_env.step_async(acts)
-                out = vec_env.step_wait()
+                
+                # Add timeout to prevent hanging
+                import signal
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("Environment step timed out")
+                
+                # Set timeout for step_wait (30 seconds)
+                old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(30)
+                
+                try:
+                    out = vec_env.step_wait()
+                finally:
+                    signal.alarm(0)
+                    signal.signal(signal.SIGALRM, old_handler)
                 
                 # Handle different gym API versions
                 if len(out) == 5:
@@ -528,15 +542,30 @@ def main():
                     rews = rews.reshape(N_ENVS, -1).sum(axis=1)
                 dones = np.asarray(dones, dtype=bool)
                 
-            except (EOFError, BrokenPipeError, ConnectionResetError) as e:
+            except (EOFError, BrokenPipeError, ConnectionResetError, TimeoutError) as e:
                 print(f"Environment communication error: {e}")
                 print("Recreating environments...")
                 
-                # Close the problematic environment
+                # Close the problematic environment with force
                 try:
                     vec_env.close()
                 except:
                     pass
+                
+                # Kill any hanging processes
+                import multiprocessing
+                for p in multiprocessing.active_children():
+                    try:
+                        p.terminate()
+                        p.join(timeout=2)
+                        if p.is_alive():
+                            p.kill()
+                    except:
+                        pass
+                
+                # Wait a moment for cleanup
+                import time
+                time.sleep(2)
                 
                 # Recreate environments
                 selected_rasters = raster_manager.get_random_rasters(N_ENVS)
