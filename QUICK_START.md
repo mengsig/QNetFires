@@ -157,7 +157,16 @@ Your enhanced QAgent system is now ready for large-scale wildfire fuel-break pla
 - `python3 train_robust.py` (with automatic restart)
 - `python3 src/Train.py` (enhanced with error handling)
 
-### 4. Visualize Results
+### 4. Monitor Training Progress
+```bash
+# Monitor training in real-time (in separate terminal)
+python3 monitor_training.py --log_file training.log
+
+# Or start training with logging
+python3 train_sync.py 2>&1 | tee training.log
+```
+
+### 5. Visualize Results
 ```bash
 # Visualize trained model
 python3 src/Visualize.py --ckpt checkpoints/qnet_best.pt --gif

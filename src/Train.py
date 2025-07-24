@@ -166,10 +166,12 @@ class RobustAutoResetWrapper(gym.Wrapper):
         self._len = 0
         self._error_count = 0
         self._max_errors = 5
+        self._last_burned = None  # Track burned area
 
     def reset(self, **kw):
         self._ret = 0
         self._len = 0
+        self._last_burned = None
         try:
             return self.env.reset(**kw)
         except Exception as e:
@@ -186,10 +188,23 @@ class RobustAutoResetWrapper(gym.Wrapper):
             self._ret += float(r)
             self._len += 1
             
+            # Always ensure info dict exists and has burned area
+            if info is None:
+                info = {}
+            info = dict(info)
+            
+            # Track burned area for reporting
+            if "burned" in info:
+                self._last_burned = info["burned"]
+            elif self._last_burned is not None:
+                info["burned"] = self._last_burned
+            else:
+                info["burned"] = 0.0
+            
             if d or tr:
-                info = dict(info)
                 info["episode_return"] = self._ret
                 info["episode_length"] = self._len
+                print(f"Episode completed naturally: Return={self._ret:.3f}, Length={self._len}, Burned={info.get('burned', 0):.1f}")
                 try:
                     obs, _ = self.env.reset()
                 except Exception as e:
@@ -197,6 +212,8 @@ class RobustAutoResetWrapper(gym.Wrapper):
                     obs = self._get_dummy_obs()
                 self._ret = 0
                 self._len = 0
+                self._last_burned = None
+            
             return obs, r, d, tr, info
             
         except Exception as e:
@@ -207,11 +224,17 @@ class RobustAutoResetWrapper(gym.Wrapper):
             obs = self._get_dummy_obs()
             reward = -1.0  # Negative reward for failed step
             done = True
-            info = {"episode_return": self._ret, "episode_length": self._len, "error": True}
+            info = {
+                "episode_return": self._ret, 
+                "episode_length": self._len, 
+                "burned": self._last_burned if self._last_burned is not None else 100.0,
+                "error": True
+            }
             
             # Reset for next episode
             self._ret = 0
             self._len = 0
+            self._last_burned = None
             
             return obs, reward, done, False, info
     
@@ -481,7 +504,9 @@ def main():
     global_step = 0
     eps = START_EPS
     loss_win = deque(maxlen=1000)
-    reward_win = deque(maxlen=100)
+    reward_win = deque(maxlen=100)  # Episode returns
+    step_reward_win = deque(maxlen=1000)  # Step-by-step rewards
+    burned_area_win = deque(maxlen=1000)  # Burned areas
     
     # Training metrics
     best_avg_reward = float('-inf')
@@ -584,11 +609,25 @@ def main():
             for i in range(N_ENVS):
                 buf.push(obs[i], acts[i], rews[i], nxt[i], dones[i])
                 info_i = infos[i] if isinstance(infos, (list, tuple)) else infos
+                
+                # Always track step rewards (not just episode returns)
+                step_reward_win.append(rews[i])
+                
+                # Track burned area if available
+                if info_i and "burned" in info_i:
+                    burned_area_win.append(info_i["burned"])
+                
+                # Track episode completion
                 if info_i and "episode_return" in info_i:
                     episode_reward = info_i['episode_return']
                     episode_rewards.append(episode_reward)
                     reward_win.append(episode_reward)
-                    print(f"[env {i}] R={episode_reward:.3f} L={info_i['episode_length']}")
+                    print(f"[env {i}] Episode completed: R={episode_reward:.3f} L={info_i['episode_length']} "
+                          f"Burned={info_i.get('burned', 'N/A'):.1f}")
+                elif dones[i]:
+                    # Episode ended but no return recorded - use accumulated step rewards
+                    print(f"[env {i}] Episode ended: Step_reward={rews[i]:.3f} "
+                          f"Burned={info_i.get('burned', 'N/A') if info_i else 'N/A':.1f}")
 
             obs = nxt
             global_step += N_ENVS
@@ -648,21 +687,35 @@ def main():
                     if global_step % TARGET_SYNC_EVERY == 0:
                         tgt.load_state_dict(model.state_dict())
 
-        # Episode statistics
+        # Episode statistics with multiple metrics
         mean_loss = float(np.mean(loss_win)) if loss_win else float("nan")
-        mean_reward = float(np.mean(reward_win)) if reward_win else float("nan")
+        
+        # Episode returns (if episodes complete)
+        mean_episode_reward = float(np.mean(reward_win)) if reward_win else float("nan")
+        
+        # Step rewards (always available)
+        mean_step_reward = float(np.mean(step_reward_win)) if step_reward_win else float("nan")
+        
+        # Burned area (fire spread metric)
+        mean_burned_area = float(np.mean(burned_area_win)) if burned_area_win else float("nan")
+        
+        # Use step reward as primary metric if episode rewards not available
+        primary_reward = mean_episode_reward if not np.isnan(mean_episode_reward) else mean_step_reward
+        
         current_lr = opt.param_groups[0]['lr'] if USE_LR_SCHEDULER else LR
         
         print(f"[MetaEp {ep}] steps={STEPS_PER_EP * N_ENVS} eps={eps:.3f} "
-              f"mean_loss={mean_loss:.4f} mean_reward={mean_reward:.3f} lr={current_lr:.2e}")
+              f"loss={mean_loss:.4f} ep_reward={mean_episode_reward:.3f} "
+              f"step_reward={mean_step_reward:.4f} burned_area={mean_burned_area:.1f} lr={current_lr:.2e}")
         
-        # Track best performance
-        if mean_reward > best_avg_reward:
-            best_avg_reward = mean_reward
+        # Track best performance using primary reward metric
+        if not np.isnan(primary_reward) and primary_reward > best_avg_reward:
+            best_avg_reward = primary_reward
             episodes_since_improvement = 0
             # Save best model
             os.makedirs("checkpoints", exist_ok=True)
             torch.save(model.state_dict(), "checkpoints/qnet_best.pt")
+            print(f"🎉 New best model saved! Reward: {primary_reward:.4f}")
         else:
             episodes_since_improvement += 1
 

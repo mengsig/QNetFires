@@ -258,7 +258,9 @@ def main():
     global_step = 0
     eps = START_EPS
     loss_win = deque(maxlen=1000)
-    reward_win = deque(maxlen=100)
+    reward_win = deque(maxlen=100)  # Episode returns
+    step_reward_win = deque(maxlen=1000)  # Step-by-step rewards
+    burned_area_win = deque(maxlen=1000)  # Burned areas
     best_avg_reward = float('-inf')
     
     print("Starting synchronous training...")
@@ -288,10 +290,23 @@ def main():
             # Store transitions
             for i in range(N_ENVS):
                 buf.push(obs[i], acts[i], rews[i], nxt[i], dones[i])
+                
+                # Always track step rewards
+                step_reward_win.append(rews[i])
+                
+                # Track burned area if available
+                if infos[i] and "burned" in infos[i]:
+                    burned_area_win.append(infos[i]["burned"])
+                
+                # Track episode completion
                 if infos[i] and "episode_return" in infos[i]:
                     episode_reward = infos[i]['episode_return']
                     reward_win.append(episode_reward)
-                    print(f"[env {i}] R={episode_reward:.3f} L={infos[i].get('episode_length', 0)}")
+                    print(f"[env {i}] Episode completed: R={episode_reward:.3f} L={infos[i].get('episode_length', 0)} "
+                          f"Burned={infos[i].get('burned', 'N/A'):.1f}")
+                elif dones[i]:
+                    print(f"[env {i}] Episode ended: Step_reward={rews[i]:.3f} "
+                          f"Burned={infos[i].get('burned', 'N/A') if infos[i] else 'N/A':.1f}")
             
             obs = nxt
             global_step += N_ENVS
@@ -316,18 +331,31 @@ def main():
                 if global_step % TARGET_SYNC_EVERY == 0:
                     tgt.load_state_dict(model.state_dict())
         
-        # Episode statistics
+        # Episode statistics with multiple metrics
         mean_loss = float(np.mean(loss_win)) if loss_win else float("nan")
-        mean_reward = float(np.mean(reward_win)) if reward_win else float("nan")
+        
+        # Episode returns (if episodes complete)
+        mean_episode_reward = float(np.mean(reward_win)) if reward_win else float("nan")
+        
+        # Step rewards (always available)
+        mean_step_reward = float(np.mean(step_reward_win)) if step_reward_win else float("nan")
+        
+        # Burned area (fire spread metric)
+        mean_burned_area = float(np.mean(burned_area_win)) if burned_area_win else float("nan")
+        
+        # Use step reward as primary metric if episode rewards not available
+        primary_reward = mean_episode_reward if not np.isnan(mean_episode_reward) else mean_step_reward
         
         print(f"[MetaEp {ep}] steps={STEPS_PER_EP * N_ENVS} eps={eps:.3f} "
-              f"mean_loss={mean_loss:.4f} mean_reward={mean_reward:.3f}")
+              f"loss={mean_loss:.4f} ep_reward={mean_episode_reward:.3f} "
+              f"step_reward={mean_step_reward:.4f} burned_area={mean_burned_area:.1f}")
         
         # Track best performance
-        if mean_reward > best_avg_reward:
-            best_avg_reward = mean_reward
+        if not np.isnan(primary_reward) and primary_reward > best_avg_reward:
+            best_avg_reward = primary_reward
             os.makedirs("checkpoints", exist_ok=True)
             torch.save(model.state_dict(), "checkpoints/qnet_sync_best.pt")
+            print(f"🎉 New best model saved! Reward: {primary_reward:.4f}")
         
         # Regular checkpointing
         if ep % SAVE_EVERY == 0:
