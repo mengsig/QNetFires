@@ -68,9 +68,34 @@ RASTER_ROOT = "cropped_raster"  # Path to your raster data
 ## 🔧 Troubleshooting
 
 ### Common Issues:
-- **Out of Memory**: Reduce `BATCH_SIZE` from 64 to 32
+- **CUDA Out of Memory**: Use memory-efficient training (see below)
 - **No Rasters Found**: System creates dummy data automatically
 - **Slow Training**: Try `USE_ENHANCED_MODEL = False`
+
+### 🧠 Memory Optimization (Important!)
+
+If you get `CUDA out of memory` errors:
+
+#### Option 1: Use Memory-Efficient Script
+```bash
+python3 train_memory_efficient.py
+```
+
+#### Option 2: Manual Configuration
+Edit `src/Train.py` and change:
+```python
+BATCH_SIZE = 16          # Reduced from 32
+N_ENVS = 8              # Reduced from 16  
+SIMS = 15               # Reduced from 25
+USE_ENHANCED_MODEL = False  # Use basic QNet
+MEMORY_EFFICIENT = True     # Enable optimizations
+```
+
+#### Option 3: Environment Variable
+```bash
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+python3 src/Train.py
+```
 
 ### Performance Tips:
 - Monitor console output for raster cycling

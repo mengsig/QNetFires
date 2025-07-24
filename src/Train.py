@@ -222,11 +222,17 @@ def main():
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device {DEVICE}...")
     
+    # CUDA memory optimization
+    if DEVICE == "cuda":
+        torch.cuda.empty_cache()
+        print(f"Initial GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+        print(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+    
     # Hyperparams
     EPISODES = 1000  # Increased episodes to utilize all rasters
     STEPS_PER_EP = 2  # Increased steps per episode
     BUFFER_CAP = 100_000  # Increased buffer capacity
-    BATCH_SIZE = 64  # Increased batch size for better gradient estimates
+    BATCH_SIZE = 32  # Reduced from 64 to save memory
     GAMMA = 0.99
     LR = 3e-4  # Adjusted learning rate
     START_EPS = 1.0
@@ -241,8 +247,12 @@ def main():
     USE_DUELING = False  # Set to True to use DuelingQNet
     USE_LR_SCHEDULER = True
     
+    # Memory optimization settings
+    MEMORY_EFFICIENT = True  # Enable memory optimizations
+    GRADIENT_ACCUMULATION_STEPS = 2  # Accumulate gradients to simulate larger batch size
+    
     # Vectorized env parameters
-    N_ENVS = 32
+    N_ENVS = 16  # Reduced from 32 to save memory
     BUDGET = 200
     K_STEPS = 10
     SIMS = 25
@@ -310,15 +320,21 @@ def main():
     N_ENVS = obs.shape[0]
     _, C, H, W = obs.shape
 
-    # Initialize model
+    # Initialize model with memory considerations
     if USE_DUELING:
         model = DuelingQNet(H, W).to(DEVICE)
         tgt = DuelingQNet(H, W).to(DEVICE)
         print("Using Dueling DQN architecture")
     elif USE_ENHANCED_MODEL:
-        model = EnhancedQNet(H, W, use_attention=True, use_residual=True, use_multiscale=True).to(DEVICE)
-        tgt = EnhancedQNet(H, W, use_attention=True, use_residual=True, use_multiscale=True).to(DEVICE)
-        print("Using Enhanced DQN architecture with attention and residual connections")
+        if MEMORY_EFFICIENT:
+            # Use lighter version of enhanced model for memory efficiency
+            model = EnhancedQNet(H, W, use_attention=False, use_residual=True, use_multiscale=False).to(DEVICE)
+            tgt = EnhancedQNet(H, W, use_attention=False, use_residual=True, use_multiscale=False).to(DEVICE)
+            print("Using Memory-Efficient Enhanced DQN architecture (residual only)")
+        else:
+            model = EnhancedQNet(H, W, use_attention=True, use_residual=True, use_multiscale=True).to(DEVICE)
+            tgt = EnhancedQNet(H, W, use_attention=True, use_residual=True, use_multiscale=True).to(DEVICE)
+            print("Using Full Enhanced DQN architecture with attention and residual connections")
     else:
         model = QNet(H, W).to(DEVICE)
         tgt = QNet(H, W).to(DEVICE)
@@ -348,6 +364,10 @@ def main():
     # Training metrics
     best_avg_reward = float('-inf')
     episodes_since_improvement = 0
+    
+    # Gradient accumulation tracking
+    accumulated_loss = 0.0
+    accumulation_steps = 0
 
     for ep in range(1, EPISODES + 1):
         print(f"META-EP: {ep}/{EPISODES}")
@@ -401,7 +421,7 @@ def main():
             frac = min(1.0, global_step / EPS_DECAY_STEPS)
             eps = START_EPS - (START_EPS - END_EPS) * frac
 
-            # Training step
+            # Training step with gradient accumulation
             if len(buf) >= BATCH_SIZE:
                 if USE_PRIORITIZED_REPLAY:
                     batch, indices, weights = buf.sample(BATCH_SIZE)
@@ -412,20 +432,45 @@ def main():
                     batch = buf.sample(BATCH_SIZE)
                     loss, _ = compute_q_loss(model, tgt, batch, GAMMA, K_STEPS, device=DEVICE)
                 
-                opt.zero_grad()
-                loss.backward()
-                # Gradient clipping for stability
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
-                opt.step()
-                
-                if USE_LR_SCHEDULER:
-                    scheduler.step()
-                
-                loss_win.append(loss.item())
-                
-                # Update target network
-                if global_step % TARGET_SYNC_EVERY == 0:
-                    tgt.load_state_dict(model.state_dict())
+                # Gradient accumulation
+                if MEMORY_EFFICIENT and GRADIENT_ACCUMULATION_STEPS > 1:
+                    loss = loss / GRADIENT_ACCUMULATION_STEPS
+                    loss.backward()
+                    accumulated_loss += loss.item()
+                    accumulation_steps += 1
+                    
+                    if accumulation_steps >= GRADIENT_ACCUMULATION_STEPS:
+                        # Gradient clipping for stability
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+                        opt.step()
+                        opt.zero_grad()
+                        
+                        if USE_LR_SCHEDULER:
+                            scheduler.step()
+                        
+                        loss_win.append(accumulated_loss)
+                        accumulated_loss = 0.0
+                        accumulation_steps = 0
+                        
+                        # Update target network
+                        if global_step % TARGET_SYNC_EVERY == 0:
+                            tgt.load_state_dict(model.state_dict())
+                else:
+                    # Standard training step
+                    opt.zero_grad()
+                    loss.backward()
+                    # Gradient clipping for stability
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+                    opt.step()
+                    
+                    if USE_LR_SCHEDULER:
+                        scheduler.step()
+                    
+                    loss_win.append(loss.item())
+                    
+                    # Update target network
+                    if global_step % TARGET_SYNC_EVERY == 0:
+                        tgt.load_state_dict(model.state_dict())
 
         # Episode statistics
         mean_loss = float(np.mean(loss_win)) if loss_win else float("nan")
@@ -455,6 +500,11 @@ def main():
                 'best_reward': best_avg_reward,
                 'loss': mean_loss,
             }, f"checkpoints/qnet_ep{ep}.pt")
+            
+            # Clear CUDA cache periodically
+            if DEVICE == "cuda":
+                torch.cuda.empty_cache()
+                print(f"GPU memory after cleanup: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
 
     # Final save
     torch.save({
