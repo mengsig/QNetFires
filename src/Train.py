@@ -21,9 +21,7 @@ sys.path.insert(0, project_root)
 from src.utils.loadingUtils import RasterManager  # noqa: E402
 
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 Transition = namedtuple("Transition", "obs action reward next_obs done")
-print(f"Using device {DEVICE}...")
 
 
 # ---------- Prioritized Experience Replay ----------
@@ -70,7 +68,7 @@ class PrioritizedReplayBuffer:
         
         self.beta = min(1.0, self.beta + self.beta_increment)
         
-        return Transition(*zip(*samples)), indices, torch.FloatTensor(weights).to(DEVICE)
+        return Transition(*zip(*samples)), indices, torch.FloatTensor(weights)
     
     def update_priorities(self, indices, priorities):
         for idx, priority in zip(indices, priorities):
@@ -98,13 +96,13 @@ class ReplayBuffer:
 
 
 # ---------- Enhanced Loss Functions ----------
-def compute_q_loss(model, target_model, batch, gamma, k, weights=None):
+def compute_q_loss(model, target_model, batch, gamma, k, weights=None, device="cpu"):
     """Enhanced Q-learning loss with optional importance sampling weights."""
-    obs_t = torch.from_numpy(np.stack(batch.obs)).float().to(DEVICE)
-    next_t = torch.from_numpy(np.stack(batch.next_obs)).float().to(DEVICE)
-    a_t = torch.from_numpy(np.stack(batch.action)).long().to(DEVICE)
-    r_t = torch.from_numpy(np.array(batch.reward, dtype=np.float32)).to(DEVICE)
-    d_t = torch.from_numpy(np.array(batch.done, dtype=np.uint8)).to(DEVICE)
+    obs_t = torch.from_numpy(np.stack(batch.obs)).float().to(device)
+    next_t = torch.from_numpy(np.stack(batch.next_obs)).float().to(device)
+    a_t = torch.from_numpy(np.stack(batch.action)).long().to(device)
+    r_t = torch.from_numpy(np.array(batch.reward, dtype=np.float32)).to(device)
+    d_t = torch.from_numpy(np.array(batch.done, dtype=np.uint8)).to(device)
 
     q_all = model(obs_t)
     mask = a_t.bool()
@@ -160,6 +158,12 @@ class AutoResetWrapper(gym.Wrapper):
 def make_env_with_raster(raster, budget, kstep, sims, seed):
     """Create environment with specific raster data."""
     def thunk():
+        # Set random seed for reproducibility in subprocess
+        import random
+        import numpy as np
+        random.seed(seed)
+        np.random.seed(seed)
+        
         env = FuelBreakEnv(
             raster,
             break_budget=budget,
@@ -172,12 +176,12 @@ def make_env_with_raster(raster, budget, kstep, sims, seed):
 
 
 # ---------- Action helper ----------
-def choose_actions_batch(model, obs_np, k, eps):
+def choose_actions_batch(model, obs_np, k, eps, device="cpu"):
     N, C, H, W = obs_np.shape
     HxW = H * W
     acts = np.zeros((N, HxW), dtype=np.int8)
     with torch.no_grad():
-        qs = model(torch.from_numpy(obs_np).to(DEVICE)).cpu().numpy()
+        qs = model(torch.from_numpy(obs_np).to(device)).cpu().numpy()
     for i in range(N):
         if random.random() < eps:
             idx = np.random.choice(HxW, k, replace=False)
@@ -214,6 +218,10 @@ class CosineAnnealingWarmup:
 
 # ---------- main ----------
 def main():
+    # Device selection
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device {DEVICE}...")
+    
     # Hyperparams
     EPISODES = 1000  # Increased episodes to utilize all rasters
     STEPS_PER_EP = 2  # Increased steps per episode
@@ -360,7 +368,7 @@ def main():
         episode_rewards = []
         
         for step in range(STEPS_PER_EP):
-            acts = choose_actions_batch(model, obs, K_STEPS, eps)
+            acts = choose_actions_batch(model, obs, K_STEPS, eps, DEVICE)
             vec_env.step_async(acts)
             out = vec_env.step_wait()
             
@@ -397,11 +405,12 @@ def main():
             if len(buf) >= BATCH_SIZE:
                 if USE_PRIORITIZED_REPLAY:
                     batch, indices, weights = buf.sample(BATCH_SIZE)
-                    loss, td_errors = compute_q_loss(model, tgt, batch, GAMMA, K_STEPS, weights)
+                    weights = weights.to(DEVICE)
+                    loss, td_errors = compute_q_loss(model, tgt, batch, GAMMA, K_STEPS, weights, DEVICE)
                     buf.update_priorities(indices, td_errors + 1e-6)  # Small epsilon for numerical stability
                 else:
                     batch = buf.sample(BATCH_SIZE)
-                    loss, _ = compute_q_loss(model, tgt, batch, GAMMA, K_STEPS)
+                    loss, _ = compute_q_loss(model, tgt, batch, GAMMA, K_STEPS, device=DEVICE)
                 
                 opt.zero_grad()
                 loss.backward()
