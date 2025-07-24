@@ -204,7 +204,9 @@ class RobustAutoResetWrapper(gym.Wrapper):
             if d or tr:
                 info["episode_return"] = self._ret
                 info["episode_length"] = self._len
-                print(f"Episode completed naturally: Return={self._ret:.3f}, Length={self._len}, Burned={info.get('burned', 0):.1f}")
+                burned_val = info.get('burned', 0)
+                burned_str = f"{float(burned_val):.1f}" if burned_val is not None else "0.0"
+                print(f"Episode completed naturally: Return={float(self._ret):.3f}, Length={self._len}, Burned={burned_str}")
                 try:
                     obs, _ = self.env.reset()
                 except Exception as e:
@@ -611,23 +613,28 @@ def main():
                 info_i = infos[i] if isinstance(infos, (list, tuple)) else infos
                 
                 # Always track step rewards (not just episode returns)
-                step_reward_win.append(rews[i])
+                step_reward_win.append(float(rews[i]))
                 
                 # Track burned area if available
                 if info_i and "burned" in info_i:
-                    burned_area_win.append(info_i["burned"])
+                    burned_area_win.append(float(info_i["burned"]))
                 
                 # Track episode completion
                 if info_i and "episode_return" in info_i:
-                    episode_reward = info_i['episode_return']
+                    episode_reward = float(info_i['episode_return'])
                     episode_rewards.append(episode_reward)
                     reward_win.append(episode_reward)
+                    burned_val = info_i.get('burned', 'N/A')
+                    burned_str = f"{float(burned_val):.1f}" if burned_val != 'N/A' else 'N/A'
                     print(f"[env {i}] Episode completed: R={episode_reward:.3f} L={info_i['episode_length']} "
-                          f"Burned={info_i.get('burned', 'N/A'):.1f}")
+                          f"Burned={burned_str}")
                 elif dones[i]:
                     # Episode ended but no return recorded - use accumulated step rewards
-                    print(f"[env {i}] Episode ended: Step_reward={rews[i]:.3f} "
-                          f"Burned={info_i.get('burned', 'N/A') if info_i else 'N/A':.1f}")
+                    step_reward = float(rews[i])
+                    burned_val = info_i.get('burned', 'N/A') if info_i else 'N/A'
+                    burned_str = f"{float(burned_val):.1f}" if burned_val != 'N/A' else 'N/A'
+                    print(f"[env {i}] Episode ended: Step_reward={step_reward:.3f} "
+                          f"Burned={burned_str}")
 
             obs = nxt
             global_step += N_ENVS

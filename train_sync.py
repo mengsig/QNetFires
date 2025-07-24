@@ -292,21 +292,26 @@ def main():
                 buf.push(obs[i], acts[i], rews[i], nxt[i], dones[i])
                 
                 # Always track step rewards
-                step_reward_win.append(rews[i])
+                step_reward_win.append(float(rews[i]))
                 
                 # Track burned area if available
                 if infos[i] and "burned" in infos[i]:
-                    burned_area_win.append(infos[i]["burned"])
+                    burned_area_win.append(float(infos[i]["burned"]))
                 
                 # Track episode completion
                 if infos[i] and "episode_return" in infos[i]:
-                    episode_reward = infos[i]['episode_return']
+                    episode_reward = float(infos[i]['episode_return'])
                     reward_win.append(episode_reward)
+                    burned_val = infos[i].get('burned', 'N/A')
+                    burned_str = f"{float(burned_val):.1f}" if burned_val != 'N/A' else 'N/A'
                     print(f"[env {i}] Episode completed: R={episode_reward:.3f} L={infos[i].get('episode_length', 0)} "
-                          f"Burned={infos[i].get('burned', 'N/A'):.1f}")
+                          f"Burned={burned_str}")
                 elif dones[i]:
-                    print(f"[env {i}] Episode ended: Step_reward={rews[i]:.3f} "
-                          f"Burned={infos[i].get('burned', 'N/A') if infos[i] else 'N/A':.1f}")
+                    step_reward = float(rews[i])
+                    burned_val = infos[i].get('burned', 'N/A') if infos[i] else 'N/A'
+                    burned_str = f"{float(burned_val):.1f}" if burned_val != 'N/A' else 'N/A'
+                    print(f"[env {i}] Episode ended: Step_reward={step_reward:.3f} "
+                          f"Burned={burned_str}")
             
             obs = nxt
             global_step += N_ENVS
