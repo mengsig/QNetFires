@@ -69,6 +69,7 @@ RASTER_ROOT = "cropped_raster"  # Path to your raster data
 
 ### Common Issues:
 - **CUDA Out of Memory**: Use memory-efficient training (see below)
+- **EOFError/Multiprocessing Issues**: Use robust training script (see below)
 - **No Rasters Found**: System creates dummy data automatically
 - **Slow Training**: Try `USE_ENHANCED_MODEL = False`
 
@@ -95,6 +96,23 @@ MEMORY_EFFICIENT = True     # Enable optimizations
 ```bash
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 python3 src/Train.py
+```
+
+### 🔧 Multiprocessing Issues Fix
+
+If you get `EOFError` or environment crashes:
+
+#### Option 1: Use Robust Training Script (Recommended)
+```bash
+python3 train_robust.py
+```
+
+#### Option 2: Reduce Environment Complexity
+Edit `src/Train.py`:
+```python
+N_ENVS = 8              # Reduced from 16
+SIMS = 5                # Reduced from 10
+USE_ENHANCED_MODEL = False  # Use basic model
 ```
 
 ### Performance Tips:
