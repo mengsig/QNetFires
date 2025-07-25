@@ -874,26 +874,33 @@ def main():
                 if info_i and "burned" in info_i:
                     burned_area_win.append(safe_scalar(info_i["burned"]))
                 
-                # Track episode completion
+                # Track episode completion with enhanced logging
                 if info_i and "episode_return" in info_i:
                     episode_reward = safe_scalar(info_i['episode_return'])
                     episode_rewards.append(episode_reward)
                     reward_win.append(episode_reward)
                     
-                    # Safe burned value handling with environment info
+                    # Enhanced burned area and efficiency tracking
                     burned_val = info_i.get('burned', None)
                     burned_scalar = safe_scalar(burned_val, fallback=None)
                     burned_str = f"{burned_scalar:.1f}" if burned_scalar is not None else 'N/A'
+                    
+                    # Track efficiency metrics
+                    initial_burned = info_i.get('initial_burned', burned_scalar)
+                    reduction_pct = info_i.get('reduction_percentage', 0.0) * 100
                     
                     # Add environment diagnostics
                     env_type = "DUMMY" if info_i.get('is_dummy', False) else "REAL"
                     env_id = info_i.get('env_id', i)
                     
-                    print(f"[env {i}] Episode completed: R={episode_reward:.3f} L={info_i['episode_length']} "
-                          f"Burned={burned_str} Type={env_type} ID={env_id}")
+                    print(f"[env {i}] 🎯 Episode completed: R={episode_reward:.3f} L={info_i['episode_length']} "
+                          f"Burned={burned_str} Reduction={reduction_pct:.1f}% Type={env_type} ID={env_id}")
                 elif dones[i]:
-                    # Episode ended but no return recorded - use accumulated step rewards
+                    # Episode ended but no return recorded - likely timeout/error
                     step_reward = safe_scalar(rews[i])
+                    
+                    # Track this as a timeout episode for debugging
+                    reward_win.append(step_reward)  # Use step reward as episode reward
                     
                     # Safe burned value handling with environment info
                     burned_val = info_i.get('burned', None) if info_i else None
@@ -904,7 +911,7 @@ def main():
                     env_type = "DUMMY" if (info_i and info_i.get('is_dummy', False)) else "REAL"
                     env_id = info_i.get('env_id', i) if info_i else i
                     
-                    print(f"[env {i}] Episode ended: Step_reward={step_reward:.3f} "
+                    print(f"[env {i}] ⏰ Episode timeout/error: Step_reward={step_reward:.3f} "
                           f"Burned={burned_str} Type={env_type} ID={env_id}")
 
             obs = nxt

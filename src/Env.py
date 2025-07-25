@@ -162,42 +162,96 @@ class FuelBreakEnv(gym.Env):
                 
                 burned = max(70.0, min(250.0, base_burned - reduction + noise))
 
-            # Track burned area history for better reward calculation
+            # Track burned area history for comprehensive reward calculation
             if not hasattr(self, '_initial_burned'):
                 self._initial_burned = burned  # Baseline without any fuel breaks
                 self._burn_history = [burned]
+                self._best_burned = burned  # Track the best (lowest) burned area achieved
             else:
                 self._burn_history.append(burned)
+                if burned < self._best_burned:
+                    self._best_burned = burned
             
-            # Calculate different reward components
+            # Calculate multiple reward components for balanced learning
             if self._last_burned is None:
-                # First step: small negative reward for current burned area
+                # First step: encourage low initial burned area
                 incremental_reward = -burned / float(self.H * self.W) * 0.1
-                total_reduction_reward = 0.0
+                total_efficiency_reward = 0.0
+                improvement_bonus = 0.0
             else:
-                # Incremental improvement reward (smaller weight)
+                # 1. IMMEDIATE IMPROVEMENT: Reward step-by-step progress
                 incremental = burned - self._last_burned
-                incremental_reward = -incremental / float(self.H * self.W) * 0.3
+                incremental_reward = -incremental / float(self.H * self.W) * 0.4  # Increased weight
                 
-                # Total reduction reward (main objective - higher weight)
+                # 2. TOTAL EFFICIENCY: Reward overall reduction from baseline
                 total_reduction = self._initial_burned - burned
-                total_reduction_reward = total_reduction / float(self.H * self.W) * 0.7
+                total_efficiency_reward = total_reduction / float(self.H * self.W) * 0.5  # Main objective
+                
+                # 3. BREAKTHROUGH BONUS: Extra reward for reaching new best performance
+                improvement_bonus = 0.0
+                if burned < self._best_burned:
+                    breakthrough_amount = self._best_burned - burned
+                    improvement_bonus = breakthrough_amount / float(self.H * self.W) * 0.2
+                    print(f"🎯 New best burned area: {burned:.1f} (improvement: {breakthrough_amount:.1f})")
 
             self._last_burned = burned
 
-            # Combined reward: focus on total burned area reduction
-            reward = incremental_reward + total_reduction_reward
+            # Combined reward: balanced immediate + long-term + breakthrough
+            reward = incremental_reward + total_efficiency_reward + improvement_bonus
             
-            # Bonus for achieving low burned area (encourage aggressive fuel break placement)
-            if burned < self._initial_burned * 0.7:  # 30% reduction
+            # 4. EFFICIENCY MILESTONES: Bonus for achieving significant reductions
+            reduction_percentage = (self._initial_burned - burned) / self._initial_burned
+            if reduction_percentage > 0.3:  # 30% reduction
                 reward += 0.1
-            if burned < self._initial_burned * 0.5:  # 50% reduction  
+            if reduction_percentage > 0.5:  # 50% reduction  
                 reward += 0.2
+            if reduction_percentage > 0.7:  # 70% reduction (very efficient!)
+                reward += 0.3
+                
+            # 5. FUEL BREAK EFFICIENCY: Penalize excessive fuel break usage without proportional benefit
+            breaks_used = float(np.sum(self._break_mask))
+            if breaks_used > 0:
+                efficiency_ratio = reduction_percentage / (breaks_used / float(self.H * self.W))
+                if efficiency_ratio > 10:  # Very efficient fuel break placement
+                    reward += 0.1
+                elif efficiency_ratio < 2:  # Inefficient placement
+                    reward -= 0.05
 
             done = self._used >= self.break_budget
+            
+            # EPISODE END BONUS: Strong reward for final total efficiency
+            if done:
+                final_reduction_percentage = (self._initial_burned - burned) / self._initial_burned
+                episode_efficiency_bonus = final_reduction_percentage * 2.0  # Strong final reward
+                
+                # Extra bonus for exceptional performance
+                if final_reduction_percentage > 0.8:  # 80% reduction - exceptional!
+                    episode_efficiency_bonus += 1.0
+                    print(f"🏆 EXCEPTIONAL PERFORMANCE: {final_reduction_percentage*100:.1f}% burned area reduction!")
+                elif final_reduction_percentage > 0.6:  # 60% reduction - excellent
+                    episode_efficiency_bonus += 0.5
+                    print(f"🌟 EXCELLENT PERFORMANCE: {final_reduction_percentage*100:.1f}% burned area reduction!")
+                elif final_reduction_percentage > 0.4:  # 40% reduction - good
+                    episode_efficiency_bonus += 0.2
+                    print(f"✅ GOOD PERFORMANCE: {final_reduction_percentage*100:.1f}% burned area reduction!")
+                
+                reward += episode_efficiency_bonus
+                
+                # Log final episode statistics
+                breaks_used = float(np.sum(self._break_mask))
+                efficiency_per_break = final_reduction_percentage / (breaks_used / float(self.H * self.W)) if breaks_used > 0 else 0
+                print(f"📊 Episode Summary: Initial={self._initial_burned:.1f}, Final={burned:.1f}, "
+                      f"Reduction={final_reduction_percentage*100:.1f}%, Breaks={int(breaks_used)}, "
+                      f"Efficiency={efficiency_per_break:.2f}")
+            
             obs = self._make_obs()
 
-            return obs, reward, done, False, {"burned": burned, "new_cells": new_cells.size}
+            return obs, reward, done, False, {
+                "burned": burned, 
+                "new_cells": new_cells.size,
+                "initial_burned": getattr(self, '_initial_burned', burned),
+                "reduction_percentage": (getattr(self, '_initial_burned', burned) - burned) / getattr(self, '_initial_burned', burned) if hasattr(self, '_initial_burned') else 0.0
+            }
             
         except Exception as e:
             print(f"Environment step failed: {e}")
