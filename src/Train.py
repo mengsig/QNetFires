@@ -695,11 +695,11 @@ def main():
         print(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
 
     # Hyperparams
-    EPISODES = 1000  # Increased episodes to utilize all rasters
-    STEPS_PER_EP = 3  # Increased steps per episode
+    EPISODES = 20000  # Increased episodes to utilize all rasters
+    STEPS_PER_EP = 10  # Increased steps per episode
     BUFFER_CAP = 100_000  # Increased buffer capacity
     BATCH_SIZE = 32  # Reduced from 64 to save memory
-    GAMMA = 0.99
+    GAMMA = 0.997
     LR = 3e-4  # Adjusted learning rate
     START_EPS = 1.0
     END_EPS = 0.01  # Lower final epsilon for better exploitation
@@ -826,7 +826,7 @@ def main():
     if USE_LR_SCHEDULER:
         total_steps = EPISODES * STEPS_PER_EP * 10  # Approximate total training steps
         scheduler = CosineAnnealingWarmup(
-            opt, warmup_steps=1000, total_steps=total_steps
+            opt, warmup_steps=500, total_steps=total_steps
         )
 
     # Initialize replay buffer
