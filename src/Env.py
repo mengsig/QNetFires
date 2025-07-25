@@ -120,10 +120,27 @@ class FuelBreakEnv(gym.Env):
                 self.sim.average_acres_burned = 0
                 self.sim.run_many_simulations(self.num_simulations)
                 burned = self.sim.average_acres_burned
+                
+                # Validate the result
+                if burned is None or np.isnan(burned) or burned < 0:
+                    print(f"Invalid simulation result: {burned}, using fallback")
+                    burned = float(np.sum(~self._break_mask)) / float(self.H * self.W) * 200.0
+                    
             except Exception as e:
-                print(f"Fire simulation failed: {e}")
-                # Use a fallback reward calculation
-                burned = float(np.sum(~self._break_mask)) / float(self.H * self.W) * 1000.0
+                # Only print occasionally to reduce spam
+                if hasattr(self, '_error_count'):
+                    self._error_count += 1
+                else:
+                    self._error_count = 1
+                    
+                if self._error_count <= 3 or self._error_count % 50 == 0:
+                    print(f"Fire simulation failed (#{self._error_count}): {type(e).__name__}: {e}")
+                
+                # Use a more reasonable fallback reward calculation
+                # Estimate burned area based on fuel breaks placed
+                fuel_break_coverage = float(np.sum(self._break_mask)) / float(self.H * self.W)
+                # More fuel breaks = less burned area (rough approximation)
+                burned = max(50.0, 200.0 * (1.0 - fuel_break_coverage * 0.5))
 
             if self._last_burned is None:
                 # first step, no prior baseline -> 0 shaping or full negative
