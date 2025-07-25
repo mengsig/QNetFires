@@ -153,12 +153,18 @@ def compute_spatial_metrics(actions_batch, H, W, device="cpu"):
 
 
 # ---------- Enhanced Loss Functions ----------
-def compute_spatial_aware_q_loss(model, target_model, batch, gamma, k, budget, global_step=0, weights=None, device="cpu"):
+def compute_curriculum_q_loss(model, target_model, batch, gamma, k, budget, global_step=0, weights=None, device="cpu"):
     """
-    Spatially-aware Q-learning loss that encourages line-like fuel break patterns.
+    Curriculum-based Q-learning loss that transitions from geometric guidance to performance optimization.
     
-    This loss function specifically addresses the local minima problem where the model
-    creates blob-like fuel break patterns instead of optimal line-like patterns.
+    Phase 1 (0-30k steps): Strong geometric guidance to escape blob local minima
+    Phase 2 (30k-60k steps): Gradual transition to performance-based learning  
+    Phase 3 (60k+ steps): Pure performance optimization
+    
+    Final loss components:
+    - Immediate Improvement (40%): Each fuel break should reduce burned area
+    - Total Efficiency (40%): Overall reduction from baseline
+    - Fuel Break Efficiency (20%): Penalizes wasteful placement
     
     Args:
         model: Online Q-network
@@ -167,7 +173,7 @@ def compute_spatial_aware_q_loss(model, target_model, batch, gamma, k, budget, g
         gamma: Discount factor
         k: Number of fuel breaks per step
         budget: Total fuel break budget
-        global_step: Current training step (for curriculum learning)
+        global_step: Current training step (for curriculum progression)
         weights: Importance sampling weights (for prioritized replay)
         device: Computing device
     
@@ -197,71 +203,123 @@ def compute_spatial_aware_q_loss(model, target_model, batch, gamma, k, budget, g
         q_next = next_target.gather(1, best_idx.unsqueeze(1)).squeeze(1)
         target = r_t + gamma * (1 - d_t.float()) * q_next
 
-    # Standard TD loss
+    # Standard TD loss (always present)
     td_errors = target - q_sel
     td_loss = td_errors.pow(2)
 
-    # === SPATIAL STRUCTURE COMPONENTS ===
+    # === CURRICULUM PROGRESSION ===
+    # Phase 1: 0-30k steps (strong geometric guidance)
+    # Phase 2: 30k-60k steps (transition period) 
+    # Phase 3: 60k+ steps (pure performance)
     
-    # Compute spatial metrics for current actions
-    connectivity_score, compactness_penalty, edge_ratio = compute_spatial_metrics(
-        mask.float(), H, W, device
-    )
+    geometric_phase_end = 30000
+    transition_phase_end = 60000
     
-    # 1. Connectivity Bonus: Reward connected fuel breaks (lines > scattered points)
-    connectivity_bonus = 0.2 * connectivity_score * torch.abs(td_errors)
+    if global_step < geometric_phase_end:
+        # Phase 1: Strong geometric guidance (like before)
+        geometric_weight = 1.0
+        performance_weight = 0.3
+        curriculum_phase = "GEOMETRIC"
+    elif global_step < transition_phase_end:
+        # Phase 2: Linear transition
+        progress = (global_step - geometric_phase_end) / (transition_phase_end - geometric_phase_end)
+        geometric_weight = 1.0 - progress  # 1.0 -> 0.0
+        performance_weight = 0.3 + 0.7 * progress  # 0.3 -> 1.0
+        curriculum_phase = "TRANSITION"
+    else:
+        # Phase 3: Pure performance optimization
+        geometric_weight = 0.0
+        performance_weight = 1.0
+        curriculum_phase = "PERFORMANCE"
+
+    # === GEOMETRIC COMPONENTS (fade out over time) ===
+    geometric_loss = torch.zeros_like(td_loss)
+    connectivity_score = torch.zeros(batch_size).to(device)
+    compactness_penalty_val = torch.zeros(batch_size).to(device)
+    edge_ratio = torch.zeros(batch_size).to(device)
     
-    # 2. Anti-Blob Penalty: Penalize compact, blob-like structures
-    blob_penalty = 0.15 * compactness_penalty * td_errors.pow(2)
+    if geometric_weight > 0:
+        # Compute spatial metrics only when needed
+        connectivity_score, compactness_penalty_val, edge_ratio = compute_spatial_metrics(
+            mask.float(), H, W, device
+        )
+        
+        # Geometric guidance components
+        connectivity_bonus = 0.15 * connectivity_score * torch.abs(td_errors)
+        blob_penalty = 0.1 * compactness_penalty_val * td_errors.pow(2)
+        line_bonus = 0.08 * edge_ratio * torch.abs(td_errors)
+        
+        geometric_loss = blob_penalty - connectivity_bonus - line_bonus
+
+    # === PERFORMANCE COMPONENTS (strengthen over time) ===
     
-    # 3. Line Structure Bonus: Reward high edge-to-area ratio (line-like shapes)
-    line_bonus = 0.1 * edge_ratio * torch.abs(td_errors)
+    # 1. Immediate Improvement (40% weight in final phase)
+    # Reward negative rewards (fire reduction) more strongly
+    immediate_improvement = 0.4 * torch.clamp(-r_t, min=0) * torch.abs(td_errors)
     
-    # 4. Efficiency Factor: Still encourage using fewer breaks when possible
+    # 2. Total Efficiency (40% weight in final phase)  
+    # Encourage consistent performance across episodes
+    # Use cumulative reward as proxy for total efficiency
+    baseline_performance = -0.1  # Assume baseline without fuel breaks
+    efficiency_factor = torch.clamp((baseline_performance - r_t) / abs(baseline_performance), min=0, max=2)
+    total_efficiency = 0.4 * efficiency_factor * torch.abs(td_errors)
+    
+    # 3. Fuel Break Efficiency (20% weight in final phase)
+    # Penalize using too many fuel breaks for small improvements
     num_actions = torch.sum(mask.float(), dim=1)
-    efficiency_factor = 1.0 - (num_actions / budget)
-    efficiency_bonus = 0.05 * efficiency_factor * torch.abs(td_errors)
+    fuel_break_efficiency = num_actions / (budget + 1e-6)  # Normalized usage
     
-    # 5. Exploration Regularization: Add curriculum-based exploration
-    # Gradually reduce exploration as training progresses
-    exploration_factor = max(0.1, 1.0 - global_step / 50000)  # Decay over 50k steps
-    exploration_noise = 0.1 * exploration_factor * torch.randn_like(td_errors) * torch.abs(td_errors)
+    # Efficiency milestones (bonus for significant reductions)
+    milestone_bonus = torch.zeros_like(r_t)
+    reduction_ratio = torch.clamp(-r_t / abs(baseline_performance), min=0, max=1)
     
-    # 6. Q-value Regularization: Prevent overconfident predictions
-    q_regularization = 0.01 * torch.clamp(torch.abs(q_sel) - 1.0, min=0) ** 2
+    # Milestone bonuses: 30%, 50%, 70% reduction
+    milestone_30 = (reduction_ratio >= 0.3).float() * 0.05
+    milestone_50 = (reduction_ratio >= 0.5).float() * 0.08  
+    milestone_70 = (reduction_ratio >= 0.7).float() * 0.12
+    milestone_bonus = (milestone_30 + milestone_50 + milestone_70) * torch.abs(td_errors)
     
+    # Wasteful placement penalty
+    wasteful_penalty = 0.2 * fuel_break_efficiency * td_errors.pow(2)
+    
+    performance_loss = wasteful_penalty - immediate_improvement - total_efficiency - milestone_bonus
+
     # === COMBINED LOSS ===
-    # Positive terms increase loss (penalties)
-    # Negative terms decrease loss (bonuses)
     combined_loss = (td_loss + 
-                    blob_penalty + 
-                    q_regularization + 
-                    exploration_noise -
-                    connectivity_bonus - 
-                    line_bonus - 
-                    efficiency_bonus)
+                    geometric_weight * geometric_loss + 
+                    performance_weight * performance_loss)
 
     if weights is not None:
         loss = (weights * combined_loss).mean()
     else:
         loss = combined_loss.mean()
 
-    # Detailed metrics for monitoring
+    # Comprehensive metrics for monitoring
     metrics = {
         'td_loss': td_loss.mean().item(),
-        'connectivity_bonus': connectivity_bonus.mean().item(),
-        'blob_penalty': blob_penalty.mean().item(),
-        'line_bonus': line_bonus.mean().item(),
-        'efficiency_bonus': efficiency_bonus.mean().item(),
-        'exploration_noise': exploration_noise.mean().item(),
-        'q_regularization': q_regularization.mean().item(),
+        'geometric_loss': geometric_loss.mean().item(),
+        'performance_loss': performance_loss.mean().item(),
         'combined_loss': combined_loss.mean().item(),
+        'immediate_improvement': immediate_improvement.mean().item(),
+        'total_efficiency': total_efficiency.mean().item(),
+        'wasteful_penalty': wasteful_penalty.mean().item(),
+        'milestone_bonus': milestone_bonus.mean().item(),
         'avg_q_value': q_sel.mean().item(),
         'avg_target': target.mean().item(),
+        'avg_reward': r_t.mean().item(),
+        'avg_fuel_breaks_used': num_actions.mean().item(),
+        'avg_efficiency_ratio': efficiency_factor.mean().item(),
+        
+        # Geometric metrics (will be zero in performance phase)
         'avg_connectivity': connectivity_score.mean().item(),
-        'avg_compactness': compactness_penalty.mean().item(),
+        'avg_compactness': compactness_penalty_val.mean().item(), 
         'avg_edge_ratio': edge_ratio.mean().item(),
-        'exploration_factor': exploration_factor
+        
+        # Curriculum tracking
+        'geometric_weight': geometric_weight,
+        'performance_weight': performance_weight,
+        'curriculum_phase': curriculum_phase,
+        'global_step': global_step
     }
 
     return loss, td_errors.abs().detach().cpu().numpy(), metrics
@@ -753,7 +811,10 @@ def main():
         print("Using standard Experience Replay")
         
     if USE_SPATIAL_LOSS:
-        print("🎯 Using Spatial-Aware Loss Function (anti-blob, pro-line)")
+        print("🎓 Using Curriculum-Based Loss Function:")
+        print("   Phase 1 (0-30k steps): Geometric guidance to escape blob minima")
+        print("   Phase 2 (30k-60k steps): Gradual transition to performance optimization")
+        print("   Phase 3 (60k+ steps): Pure performance focus (immediate improvement + total efficiency)")
     else:
         print("📊 Using Enhanced Loss Function (basic efficiency/effectiveness)")
 
@@ -773,12 +834,18 @@ def main():
     effectiveness_penalty_win = deque(maxlen=1000)
     q_value_win = deque(maxlen=1000)
     
-    # Spatial structure tracking
+    # Curriculum and performance tracking
+    immediate_improvement_win = deque(maxlen=1000)
+    total_efficiency_win = deque(maxlen=1000)
+    wasteful_penalty_win = deque(maxlen=1000)
+    milestone_bonus_win = deque(maxlen=1000)
+    geometric_loss_win = deque(maxlen=1000)
+    performance_loss_win = deque(maxlen=1000)
+    
+    # Spatial structure tracking (for geometric phase)
     connectivity_win = deque(maxlen=1000)
     compactness_win = deque(maxlen=1000)
     edge_ratio_win = deque(maxlen=1000)
-    blob_penalty_win = deque(maxlen=1000)
-    line_bonus_win = deque(maxlen=1000)
 
     # Training metrics
     best_avg_reward = float("-inf")
@@ -961,7 +1028,7 @@ def main():
                     batch, indices, weights = buf.sample(BATCH_SIZE)
                     weights = weights.to(DEVICE)
                     if USE_SPATIAL_LOSS:
-                        loss, td_errors, metrics = compute_spatial_aware_q_loss(
+                        loss, td_errors, metrics = compute_curriculum_q_loss(
                             model, tgt, batch, GAMMA, K_STEPS, BUDGET, global_step, weights, DEVICE
                         )
                     else:
@@ -974,7 +1041,7 @@ def main():
                 else:
                     batch = buf.sample(BATCH_SIZE)
                     if USE_SPATIAL_LOSS:
-                        loss, _, metrics = compute_spatial_aware_q_loss(
+                        loss, _, metrics = compute_curriculum_q_loss(
                             model, tgt, batch, GAMMA, K_STEPS, BUDGET, global_step, device=DEVICE
                         )
                     else:
@@ -1009,12 +1076,18 @@ def main():
                             effectiveness_penalty_win.append(metrics.get('effectiveness_penalty', 0.0))
                             q_value_win.append(metrics.get('avg_q_value', 0.0))
                             
-                            # Track spatial metrics
+                            # Track curriculum metrics
+                            immediate_improvement_win.append(metrics.get('immediate_improvement', 0.0))
+                            total_efficiency_win.append(metrics.get('total_efficiency', 0.0))
+                            wasteful_penalty_win.append(metrics.get('wasteful_penalty', 0.0))
+                            milestone_bonus_win.append(metrics.get('milestone_bonus', 0.0))
+                            geometric_loss_win.append(metrics.get('geometric_loss', 0.0))
+                            performance_loss_win.append(metrics.get('performance_loss', 0.0))
+                            
+                            # Track spatial metrics (geometric phase)
                             connectivity_win.append(metrics.get('avg_connectivity', 0.0))
                             compactness_win.append(metrics.get('avg_compactness', 0.0))
                             edge_ratio_win.append(metrics.get('avg_edge_ratio', 0.0))
-                            blob_penalty_win.append(metrics.get('blob_penalty', 0.0))
-                            line_bonus_win.append(metrics.get('line_bonus', 0.0))
                         
                         accumulated_loss = 0.0
                         accumulation_steps = 0
@@ -1042,12 +1115,18 @@ def main():
                         effectiveness_penalty_win.append(metrics.get('effectiveness_penalty', 0.0))
                         q_value_win.append(metrics.get('avg_q_value', 0.0))
                         
-                        # Track spatial metrics
+                        # Track curriculum metrics
+                        immediate_improvement_win.append(metrics.get('immediate_improvement', 0.0))
+                        total_efficiency_win.append(metrics.get('total_efficiency', 0.0))
+                        wasteful_penalty_win.append(metrics.get('wasteful_penalty', 0.0))
+                        milestone_bonus_win.append(metrics.get('milestone_bonus', 0.0))
+                        geometric_loss_win.append(metrics.get('geometric_loss', 0.0))
+                        performance_loss_win.append(metrics.get('performance_loss', 0.0))
+                        
+                        # Track spatial metrics (geometric phase)
                         connectivity_win.append(metrics.get('avg_connectivity', 0.0))
                         compactness_win.append(metrics.get('avg_compactness', 0.0))
                         edge_ratio_win.append(metrics.get('avg_edge_ratio', 0.0))
-                        blob_penalty_win.append(metrics.get('blob_penalty', 0.0))
-                        line_bonus_win.append(metrics.get('line_bonus', 0.0))
 
                     # Update target network
                     if global_step % TARGET_SYNC_EVERY == 0:
@@ -1066,42 +1145,66 @@ def main():
         mean_effectiveness_penalty = float(np.mean(effectiveness_penalty_win)) if len(effectiveness_penalty_win) > 0 else 0.0
         mean_q_value = float(np.mean(q_value_win)) if len(q_value_win) > 0 else 0.0
         
-        # Spatial structure statistics
+        # Curriculum and performance statistics
+        mean_immediate_improvement = float(np.mean(immediate_improvement_win)) if len(immediate_improvement_win) > 0 else 0.0
+        mean_total_efficiency = float(np.mean(total_efficiency_win)) if len(total_efficiency_win) > 0 else 0.0
+        mean_wasteful_penalty = float(np.mean(wasteful_penalty_win)) if len(wasteful_penalty_win) > 0 else 0.0
+        mean_milestone_bonus = float(np.mean(milestone_bonus_win)) if len(milestone_bonus_win) > 0 else 0.0
+        mean_geometric_loss = float(np.mean(geometric_loss_win)) if len(geometric_loss_win) > 0 else 0.0
+        mean_performance_loss = float(np.mean(performance_loss_win)) if len(performance_loss_win) > 0 else 0.0
+        
+        # Spatial structure statistics (for geometric phase)
         mean_connectivity = float(np.mean(connectivity_win)) if len(connectivity_win) > 0 else 0.0
         mean_compactness = float(np.mean(compactness_win)) if len(compactness_win) > 0 else 0.0
         mean_edge_ratio = float(np.mean(edge_ratio_win)) if len(edge_ratio_win) > 0 else 0.0
-        mean_blob_penalty = float(np.mean(blob_penalty_win)) if len(blob_penalty_win) > 0 else 0.0
-        mean_line_bonus = float(np.mean(line_bonus_win)) if len(line_bonus_win) > 0 else 0.0
         
         current_lr = opt.param_groups[0]["lr"] if USE_LR_SCHEDULER else LR
 
-        # Enhanced logging with performance metrics
+        # Enhanced logging with curriculum progress
         print(f"\n=== META-EPISODE {ep}/{EPISODES} SUMMARY ===")
-        print(f"Training: steps={STEPS_PER_EP * N_ENVS}, eps={eps:.3f}, lr={current_lr:.2e}")
+        print(f"Training: steps={STEPS_PER_EP * N_ENVS}, eps={eps:.3f}, lr={current_lr:.2e}, global_step={global_step}")
         print(f"Rewards: mean={mean_reward:.3f}, episodes_completed={len(episode_rewards)}")
         print(f"Environment: burned_area={mean_burned_area:.1f}, fuel_breaks_used={mean_fuel_breaks:.1f}, ep_length={mean_episode_length:.1f}")
-        print(f"Loss Components: total={mean_loss:.4f}, td={mean_td_loss:.4f}, eff_bonus={mean_efficiency_bonus:.4f}")
-        print(f"Spatial Structure: connectivity={mean_connectivity:.3f}, edge_ratio={mean_edge_ratio:.3f}, compactness={mean_compactness:.3f}")
-        print(f"Spatial Incentives: line_bonus={mean_line_bonus:.4f}, blob_penalty={mean_blob_penalty:.4f}")
-        print(f"Q-Values: mean={mean_q_value:.3f}")
         
-        # Visual indicators for spatial structure quality
-        if mean_connectivity > 2.0:
-            structure_indicator = "🔗 CONNECTED"
-        elif mean_connectivity > 1.0:
-            structure_indicator = "➖ PARTIAL"
+        # Curriculum phase detection
+        if global_step < 30000:
+            curriculum_phase = "🎯 GEOMETRIC"
+            phase_progress = global_step / 30000 * 100
+        elif global_step < 60000:
+            curriculum_phase = "🔄 TRANSITION" 
+            phase_progress = (global_step - 30000) / 30000 * 100
         else:
-            structure_indicator = "⚪ SCATTERED"
+            curriculum_phase = "🎖️ PERFORMANCE"
+            phase_progress = 100.0
             
-        if mean_edge_ratio > 3.0:
-            shape_indicator = "📏 LINE-LIKE"
-        elif mean_edge_ratio > 2.0:
-            shape_indicator = "🔄 MIXED"
-        else:
-            shape_indicator = "🔵 BLOB-LIKE"
+        print(f"Curriculum: {curriculum_phase} ({phase_progress:.1f}%)")
+        print(f"Loss Components: total={mean_loss:.4f}, geometric={mean_geometric_loss:.4f}, performance={mean_performance_loss:.4f}")
+        print(f"Performance Metrics: improvement={mean_immediate_improvement:.4f}, efficiency={mean_total_efficiency:.4f}, wasteful={mean_wasteful_penalty:.4f}")
+        print(f"Bonuses: milestones={mean_milestone_bonus:.4f}")
+        
+        # Show spatial metrics only during geometric phase
+        if global_step < 60000:
+            print(f"Spatial (Geometric Phase): connectivity={mean_connectivity:.3f}, edge_ratio={mean_edge_ratio:.3f}, compactness={mean_compactness:.3f}")
             
-        print(f"Structure Quality: {structure_indicator} | Shape Quality: {shape_indicator}")
-        print("=" * 60)
+            # Visual indicators for spatial structure quality
+            if mean_connectivity > 2.0:
+                structure_indicator = "🔗 CONNECTED"
+            elif mean_connectivity > 1.0:
+                structure_indicator = "➖ PARTIAL"
+            else:
+                structure_indicator = "⚪ SCATTERED"
+                
+            if mean_edge_ratio > 3.0:
+                shape_indicator = "📏 LINE-LIKE"
+            elif mean_edge_ratio > 2.0:
+                shape_indicator = "🔄 MIXED"
+            else:
+                shape_indicator = "🔵 BLOB-LIKE"
+                
+            print(f"Structure Quality: {structure_indicator} | Shape Quality: {shape_indicator}")
+        
+        print(f"Q-Values: mean={mean_q_value:.3f}")
+        print("=" * 70)
 
         # Track best performance (considering both reward and burned area)
         performance_improved = False
