@@ -50,10 +50,11 @@ def safe_scalar(value, fallback=0.0):
 class ThreadedVectorEnv:
     """Threaded vector environment for stable parallel execution."""
     
-    def __init__(self, env_fns, max_workers=None):
+    def __init__(self, env_fns, max_workers=None, budget=250):
         self.env_fns = env_fns
         self.num_envs = len(env_fns)
         self.envs = [None] * self.num_envs
+        self.budget = budget
         self.max_workers = max_workers or min(self.num_envs, 16)  # Limit threads for stability
         
         # Initialize environments
@@ -74,30 +75,46 @@ class ThreadedVectorEnv:
                 print(f"Environment {i}: ✅ Created successfully")
             except Exception as e:
                 print(f"Environment {i}: ❌ Failed: {e}")
-                # Create a minimal dummy environment
-                self.envs[i] = self._create_dummy_env()
+                # Create a minimal dummy environment with proper budget
+                self.envs[i] = self._create_dummy_env(budget=self.budget)
     
-    def _create_dummy_env(self):
+    def _create_dummy_env(self, budget=250):
         """Create a minimal dummy environment for fallback."""
         class DummyEnv:
-            def __init__(self):
+            def __init__(self, budget=250):
                 self.H, self.W = 50, 50
                 self.steps = 0
+                self.budget = budget
+                self.fuel_breaks_used = 0
                 
             def reset(self):
                 self.steps = 0
+                self.fuel_breaks_used = 0
                 obs = np.random.rand(8, self.H, self.W).astype(np.float32)
                 return obs, {}
                 
             def step(self, action):
                 self.steps += 1
+                # Count fuel breaks from action
+                action_array = np.asarray(action).reshape(-1)
+                new_breaks = min(np.sum(action_array > 0.5), 10)  # Max 10 per step
+                self.fuel_breaks_used += new_breaks
+                
                 obs = np.random.rand(8, self.H, self.W).astype(np.float32)
                 reward = -0.1  # Small negative reward
-                done = self.steps >= 20
-                info = {"burned": 150.0, "new_cells": 1, "dummy": True}
+                
+                # Done when budget is exceeded (like real environment)
+                done = self.fuel_breaks_used >= self.budget
+                
+                # Simulate burned area reducing as more fuel breaks are placed
+                base_burned = 200.0
+                reduction = (self.fuel_breaks_used / self.budget) * 100.0
+                burned = max(50.0, base_burned - reduction)
+                
+                info = {"burned": burned, "new_cells": int(new_breaks), "dummy": True}
                 return obs, reward, done, False, info
                 
-        return DummyEnv()
+        return DummyEnv(budget)
     
     def _start_workers(self):
         """Start worker threads for parallel environment execution."""
@@ -350,7 +367,7 @@ def main():
     
     # Environment parameters - optimized for stability
     N_ENVS = 16  # Reasonable for threading (user had 64 but that's too many threads)
-    BUDGET = 200
+    BUDGET = 250  # Match user's budget setting
     K_STEPS = 10
     SIMS = 1  # Minimal simulations for stability
     
@@ -366,12 +383,14 @@ def main():
     
     # Create environments
     selected_rasters = raster_manager.get_random_rasters(N_ENVS)
+    print(f"🌍 Initial raster selection: Using {len(selected_rasters)} rasters for {N_ENVS} environments")
+    
     env_fns = [
         make_env_with_raster(raster, BUDGET, K_STEPS, SIMS, seed=i) 
         for i, raster in enumerate(selected_rasters)
     ]
     
-    vec_env = ThreadedVectorEnv(env_fns)
+    vec_env = ThreadedVectorEnv(env_fns, budget=BUDGET)
     obs = vec_env.reset()
     _, C, H, W = obs.shape
     
@@ -394,6 +413,31 @@ def main():
     print(f"Starting stable threaded training with {N_ENVS} environments...")
     
     for episode in range(EPISODES):
+        # Cycle rasters every 10 episodes to ensure generalization
+        if episode % 10 == 0 and episode > 0:
+            print(f"\n🔄 Cycling rasters at episode {episode}...")
+            try:
+                # Get new rasters
+                selected_rasters = raster_manager.get_random_rasters(N_ENVS)
+                print(f"Selected {len(selected_rasters)} new rasters")
+                
+                # Close old environment
+                vec_env.close()
+                
+                # Create new environments with new rasters
+                env_fns = [
+                    make_env_with_raster(raster, BUDGET, K_STEPS, SIMS, seed=episode*N_ENVS + i) 
+                    for i, raster in enumerate(selected_rasters)
+                ]
+                
+                vec_env = ThreadedVectorEnv(env_fns, budget=BUDGET)
+                obs = vec_env.reset()
+                print(f"✅ Successfully created new environments with fresh rasters")
+                
+            except Exception as e:
+                print(f"❌ Failed to cycle rasters: {e}")
+                print("Continuing with existing environments...")
+        
         episode_rewards = []
         
         for step in range(STEPS_PER_EP):
