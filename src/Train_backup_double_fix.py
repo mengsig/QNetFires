@@ -403,7 +403,7 @@ class DummyEnv(gym.Env):
 
 
 def make_env_with_raster(raster, budget, kstep, sims, seed):
-    """Create environment with specific raster data - LAZY CREATION (no double creation)."""
+    """Create environment with specific raster data - no dummy fallback."""
     def thunk():
         # Set random seed for reproducibility in subprocess
         import random
@@ -439,8 +439,7 @@ def make_env_with_raster(raster, budget, kstep, sims, seed):
                 else:
                     effective_sims = min(3, sims)  # Full attempt
                 
-                # Only print when actually creating (not during env_fn setup)
-                print(f"🔧 Creating environment (attempt {attempt + 1}/{max_retries}, sims={effective_sims})")
+                print(f"Creating environment (attempt {attempt + 1}/{max_retries}, sims={effective_sims})")
                 
                 env = FuelBreakEnv(
                     raster,
@@ -450,25 +449,39 @@ def make_env_with_raster(raster, budget, kstep, sims, seed):
                     seed=seed,
                 )
                 
-                # MINIMAL testing - only check if environment can be created
-                try:
-                    obs, _ = env.reset()
-                    if obs is None or obs.size == 0:
-                        raise RuntimeError("Invalid environment")
-                    # Skip step testing for speed - any issues will be caught during training
-                except Exception as test_e:
-                    raise RuntimeError(f"Environment validation failed: {test_e}")
+                # Test the environment with a simple step
+                print(f"Testing environment functionality...")
+                obs, info = env.reset()
+                if obs is None or obs.size == 0:
+                    raise RuntimeError("Environment reset returned empty observation")
+                
+                # Test with minimal action
+                test_action = np.zeros(obs.shape[-2] * obs.shape[-1])
+                test_action[0] = 1  # Place one fuel break
+                
+                obs2, reward, done, truncated, info = env.step(test_action)
+                if obs2 is None or obs2.size == 0:
+                    raise RuntimeError("Environment step returned empty observation")
+                if not isinstance(reward, (int, float, np.number)):
+                    raise RuntimeError(f"Environment step returned invalid reward type: {type(reward)}")
+                if info is None or not isinstance(info, dict):
+                    raise RuntimeError("Environment step returned invalid info")
+                
+                # Reset after test
+                env.reset()
+                print(f"Environment test successful!")
                 
                 return RobustAutoResetWrapper(env)
                 
             except Exception as e:
-                print(f"❌ Environment creation attempt {attempt + 1} failed: {type(e).__name__}: {e}")
+                print(f"Environment creation attempt {attempt + 1} failed: {type(e).__name__}: {e}")
                 if attempt < max_retries - 1:
-                    print(f"🔄 Retrying with different parameters...")
+                    print(f"Retrying with different parameters...")
                     import time
                     time.sleep(0.1)  # Brief pause between retries
                 else:
-                    print(f"💥 All {max_retries} attempts failed!")
+                    print(f"All {max_retries} attempts failed!")
+                    # Instead of dummy env, raise the error - this will force investigation
                     raise RuntimeError(f"Failed to create environment after {max_retries} attempts. Last error: {e}")
     
     return thunk
