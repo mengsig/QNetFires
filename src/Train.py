@@ -208,15 +208,17 @@ def compute_curriculum_q_loss(model, target_model, batch, gamma, k, budget, glob
     td_loss = td_errors.pow(2)
 
     # === CURRICULUM PROGRESSION ===
-    # Phase 1: 0-30k steps (strong geometric guidance)
-    # Phase 2: 30k-60k steps (transition period) 
-    # Phase 3: 60k+ steps (pure performance)
+    # Phase 1a: 0-7.5k steps (heavy anti-blob)
+    # Phase 1b: 7.5k-15k steps (moderate geometric)
+    # Phase 2: 15k-25k steps (transition period) 
+    # Phase 3: 25k+ steps (pure performance)
     
-    geometric_phase_end = 30000
-    transition_phase_end = 60000
+    anti_blob_phase_end = 7500    # Reduced from 15k
+    geometric_phase_end = 15000   # Reduced from 30k  
+    transition_phase_end = 25000  # Reduced from 60k
     
     if global_step < geometric_phase_end:
-        # Phase 1: Strong geometric guidance (like before)
+        # Phase 1: Strong geometric guidance (anti-blob or moderate)
         geometric_weight = 1.0
         performance_weight = 0.3
         curriculum_phase = "GEOMETRIC"
@@ -248,13 +250,13 @@ def compute_curriculum_q_loss(model, target_model, batch, gamma, k, budget, glob
         # Early phase: Heavy blob punishment to force escape from local minima
         # Later phase: Lighter guidance to allow performance optimization
         
-        if global_step < geometric_phase_end // 2:  # First half of geometric phase (0-15k steps)
+        if global_step < anti_blob_phase_end:  # Anti-blob phase (0-7.5k steps)
             # VERY STRONG anti-blob bias
             blob_penalty_weight = 0.5  # 5x stronger than before
             connectivity_bonus_weight = 0.25
             line_bonus_weight = 0.15
             phase_name = "ANTI-BLOB"
-        else:  # Second half of geometric phase (15k-30k steps)
+        else:  # Moderate geometric phase (7.5k-15k steps)
             # Moderate geometric guidance
             blob_penalty_weight = 0.2
             connectivity_bonus_weight = 0.15
@@ -266,8 +268,8 @@ def compute_curriculum_q_loss(model, target_model, batch, gamma, k, budget, glob
         blob_penalty = blob_penalty_weight * compactness_penalty_val * td_errors.pow(2)
         line_bonus = line_bonus_weight * edge_ratio * torch.abs(td_errors)
         
-        # Add extra punishment for very compact structures in early phase
-        if global_step < geometric_phase_end // 2:
+        # Add extra punishment for very compact structures in anti-blob phase
+        if global_step < anti_blob_phase_end:
             # Extra penalty for extremely blob-like structures (compactness > 5)
             extreme_blob_penalty = 0.3 * torch.clamp(compactness_penalty_val - 5.0, min=0) * td_errors.pow(2)
             blob_penalty = blob_penalty + extreme_blob_penalty
@@ -838,11 +840,11 @@ def main():
         print("Using standard Experience Replay")
         
     if USE_SPATIAL_LOSS:
-        print("🎓 Using Enhanced Curriculum-Based Loss Function:")
-        print("   Phase 1a (0-15k steps): 🚫 HEAVY anti-blob punishment to escape local minima")
-        print("   Phase 1b (15k-30k steps): 🎯 Moderate geometric guidance for structure")
-        print("   Phase 2 (30k-60k steps): 🔄 Gradual transition to performance optimization")
-        print("   Phase 3 (60k+ steps): 🎖️ Pure performance focus (immediate improvement + total efficiency)")
+        print("🎓 Using Enhanced Curriculum-Based Loss Function (ACCELERATED):")
+        print("   Phase 1a (0-7.5k steps): 🚫 HEAVY anti-blob punishment to escape local minima")
+        print("   Phase 1b (7.5k-15k steps): 🎯 Moderate geometric guidance for structure")
+        print("   Phase 2 (15k-25k steps): 🔄 Gradual transition to performance optimization")
+        print("   Phase 3 (25k+ steps): 🎖️ Pure performance focus (immediate improvement + total efficiency)")
     else:
         print("📊 Using Enhanced Loss Function (basic efficiency/effectiveness)")
 
@@ -1207,15 +1209,15 @@ def main():
         print(f"Environment: burned_area={mean_burned_area:.1f}, fuel_breaks_used={mean_fuel_breaks:.1f}, ep_length={mean_episode_length:.1f}")
         
         # Detailed curriculum phase detection
-        if global_step < 15000:
+        if global_step < 7500:
             curriculum_phase = "🚫 ANTI-BLOB"
-            phase_progress = global_step / 15000 * 100
-        elif global_step < 30000:
+            phase_progress = global_step / 7500 * 100
+        elif global_step < 15000:
             curriculum_phase = "🎯 GEOMETRIC"
-            phase_progress = (global_step - 15000) / 15000 * 100
-        elif global_step < 60000:
+            phase_progress = (global_step - 7500) / 7500 * 100
+        elif global_step < 25000:
             curriculum_phase = "🔄 TRANSITION" 
-            phase_progress = (global_step - 30000) / 30000 * 100
+            phase_progress = (global_step - 15000) / 10000 * 100
         else:
             curriculum_phase = "🎖️ PERFORMANCE"
             phase_progress = 100.0
@@ -1226,7 +1228,7 @@ def main():
         print(f"Bonuses: milestones={mean_milestone_bonus:.4f}")
         
         # Show spatial metrics only during geometric phase
-        if global_step < 60000:
+        if global_step < 25000:
             print(f"Spatial Metrics: connectivity={mean_connectivity:.3f}, edge_ratio={mean_edge_ratio:.3f}, compactness={mean_compactness:.3f}")
             print(f"Spatial Forces: blob_penalty={mean_blob_penalty:.4f}, connectivity_bonus={mean_connectivity_bonus:.4f}, line_bonus={mean_line_bonus:.4f}")
             
@@ -1246,7 +1248,7 @@ def main():
                 shape_indicator = "🔵 BLOB-LIKE"
                 
             # Special indicator for anti-blob phase
-            if global_step < 15000:
+            if global_step < 7500:
                 blob_strength = "💪 HEAVY" if mean_blob_penalty > 0.1 else "⚡ MODERATE"
                 print(f"Anti-Blob Strength: {blob_strength} | Structure: {structure_indicator} | Shape: {shape_indicator}")
             else:
