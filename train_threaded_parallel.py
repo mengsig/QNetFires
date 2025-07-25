@@ -83,14 +83,11 @@ class ThreadedVectorEnv:
                 test_new_cells = test_info.get("new_cells", 0)
                 
                 if test_new_cells > 0:
-                    print(f"Environment {i}: ✅ Test step successful ({test_new_cells} breaks placed)")
                     self.envs[i] = env
                 else:
-                    print(f"Environment {i}: ⚠️  Test step failed (0 breaks placed), using dummy")
                     self.envs[i] = self._create_dummy_env(budget=self.budget)
                     
             except Exception as test_e:
-                print(f"Environment {i}: ⚠️  Test step error: {test_e}, using dummy")
                 self.envs[i] = self._create_dummy_env(budget=self.budget)
                 
         except Exception as e:
@@ -327,6 +324,7 @@ def make_env_with_raster(raster, budget, kstep, sims, seed):
                 def reset(self):
                     self.is_done = False
                     self.total_fuel_breaks = 0
+                    # Ensure underlying environment is properly reset
                     return self.env.reset()
                     
                 def step(self, action):
@@ -335,25 +333,14 @@ def make_env_with_raster(raster, budget, kstep, sims, seed):
                         obs = self.env._make_obs()
                         return obs, 0.0, True, False, {"burned": 0.0, "new_cells": 0, "budget_exceeded": True}
                     
-                    # Debug: Check action properties
-                    action_sum = np.sum(action) if hasattr(action, 'sum') else sum(action)
-                    action_dtype = action.dtype if hasattr(action, 'dtype') else type(action)
                     
                     try:
                         # Call the underlying environment
                         obs, reward, done, truncated, info = self.env.step(action)
                         
-                        # Debug: Check what we got back
+                        # Track fuel breaks
                         new_cells = info.get("new_cells", 0)
-                        burned = info.get("burned", 0)
-                        env_used = getattr(self.env, '_used', 'unknown')
                         
-                        # Print debug info for first step
-                        if self.total_fuel_breaks == 0:
-                            print(f"      STEP_DEBUG: action_sum={action_sum}, dtype={action_dtype}")
-                            print(f"      STEP_DEBUG: new_cells={new_cells}, burned={burned}, env._used={env_used}")
-                            print(f"      STEP_DEBUG: done={done}, reward={reward}")
-                            
                         self.total_fuel_breaks += new_cells
                         
                         # Enforce budget strictly
@@ -367,7 +354,6 @@ def make_env_with_raster(raster, budget, kstep, sims, seed):
                         return obs, reward, done, truncated, info
                         
                     except Exception as e:
-                        print(f"      ENV_ERROR: {type(e).__name__}: {e}")
                         # Return error result
                         obs = self.env._make_obs() if hasattr(self.env, '_make_obs') else np.random.rand(8, 50, 50).astype(np.float32)
                         self.is_done = True
@@ -581,6 +567,10 @@ def main():
                 # Update target network
                 if global_step % TARGET_SYNC_EVERY == 0:
                     target_model.load_state_dict(model.state_dict())
+        
+        # Reset environments for next episode
+        print(f"🔄 Resetting all environments for next episode...")
+        obs = vec_env.reset()
         
         # Episode statistics
         if episode_rewards:
