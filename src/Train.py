@@ -893,24 +893,36 @@ def main():
                     if "burned" in info_i:
                         burned_val = info_i["burned"]
                         if isinstance(burned_val, (np.ndarray, list)):
-                            burned_val = burned_val.item() if hasattr(burned_val, 'item') else burned_val[0]
+                            if np.size(burned_val) == 1:
+                                burned_val = burned_val.item() if hasattr(burned_val, 'item') else burned_val[0]
+                            else:
+                                burned_val = float(np.mean(burned_val))  # Take mean for multi-element arrays
                         burned_area_win.append(float(burned_val))
                     if "new_cells" in info_i:
                         cells_val = info_i["new_cells"]
                         if isinstance(cells_val, (np.ndarray, list)):
-                            cells_val = cells_val.item() if hasattr(cells_val, 'item') else cells_val[0]
+                            if np.size(cells_val) == 1:
+                                cells_val = cells_val.item() if hasattr(cells_val, 'item') else cells_val[0]
+                            else:
+                                cells_val = float(np.sum(cells_val))  # Take sum for multi-element arrays
                         fuel_breaks_used_win.append(float(cells_val))
                 
                 # Track episode completion metrics
                 if info_i and "episode_return" in info_i:
                     reward_val = info_i["episode_return"]
                     if isinstance(reward_val, (np.ndarray, list)):
-                        reward_val = reward_val.item() if hasattr(reward_val, 'item') else reward_val[0]
+                        if np.size(reward_val) == 1:
+                            reward_val = reward_val.item() if hasattr(reward_val, 'item') else reward_val[0]
+                        else:
+                            reward_val = float(np.sum(reward_val))  # Take sum for multi-element arrays
                     episode_reward = float(reward_val)
                     
                     length_val = info_i.get("episode_length", 0)
                     if isinstance(length_val, (np.ndarray, list)):
-                        length_val = length_val.item() if hasattr(length_val, 'item') else length_val[0]
+                        if np.size(length_val) == 1:
+                            length_val = length_val.item() if hasattr(length_val, 'item') else length_val[0]
+                        else:
+                            length_val = int(np.max(length_val))  # Take max for multi-element arrays
                     episode_length = int(length_val)
                     
                     # Ensure we have valid values before adding to windows
@@ -927,7 +939,10 @@ def main():
                     # Track intermediate step rewards to prevent all NaN
                     reward_val = rews[i]
                     if isinstance(reward_val, (np.ndarray, list)):
-                        reward_val = reward_val.item() if hasattr(reward_val, 'item') else reward_val[0]
+                        if np.size(reward_val) == 1:
+                            reward_val = reward_val.item() if hasattr(reward_val, 'item') else reward_val[0]
+                        else:
+                            reward_val = float(np.sum(reward_val))  # Take sum for multi-element arrays
                     if not (np.isnan(reward_val) or np.isinf(reward_val)):
                         reward_win.append(float(reward_val))
 
