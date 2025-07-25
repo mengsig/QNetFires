@@ -889,9 +889,10 @@ def main():
                     initial_burned = info_i.get('initial_burned', burned_scalar)
                     reduction_pct = info_i.get('reduction_percentage', 0.0) * 100
                     
-                    # Add environment diagnostics
-                    env_type = "DUMMY" if info_i.get('is_dummy', False) else "REAL"
-                    env_id = info_i.get('env_id', i)
+                    # Add environment diagnostics - safely handle array values
+                    is_dummy_val = info_i.get('is_dummy', False)
+                    env_type = "DUMMY" if safe_scalar(is_dummy_val, fallback=False) else "REAL"
+                    env_id = safe_scalar(info_i.get('env_id', i), fallback=i)
                     
                     print(f"[env {i}] 🎯 Episode completed: R={episode_reward:.3f} L={info_i['episode_length']} "
                           f"Burned={burned_str} Reduction={reduction_pct:.1f}% Type={env_type} ID={env_id}")
@@ -907,9 +908,10 @@ def main():
                     burned_scalar = safe_scalar(burned_val, fallback=None)
                     burned_str = f"{burned_scalar:.1f}" if burned_scalar is not None else 'N/A'
                     
-                    # Add environment diagnostics
-                    env_type = "DUMMY" if (info_i and info_i.get('is_dummy', False)) else "REAL"
-                    env_id = info_i.get('env_id', i) if info_i else i
+                    # Add environment diagnostics - safely handle array values
+                    is_dummy_val = info_i.get('is_dummy', False) if info_i else False
+                    env_type = "DUMMY" if safe_scalar(is_dummy_val, fallback=False) else "REAL"
+                    env_id = safe_scalar(info_i.get('env_id', i) if info_i else i, fallback=i)
                     
                     print(f"[env {i}] ⏰ Episode timeout/error: Step_reward={step_reward:.3f} "
                           f"Burned={burned_str} Type={env_type} ID={env_id}")

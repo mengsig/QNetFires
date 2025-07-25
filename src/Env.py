@@ -200,66 +200,108 @@ class FuelBreakEnv(gym.Env):
             reward = incremental_reward + total_efficiency_reward + improvement_bonus
             
             # 4. EFFICIENCY MILESTONES: Bonus for achieving significant reductions
-            reduction_percentage = (self._initial_burned - burned) / self._initial_burned
-            if reduction_percentage > 0.3:  # 30% reduction
-                reward += 0.1
-            if reduction_percentage > 0.5:  # 50% reduction  
-                reward += 0.2
-            if reduction_percentage > 0.7:  # 70% reduction (very efficient!)
-                reward += 0.3
-                
-            # 5. FUEL BREAK EFFICIENCY: Penalize excessive fuel break usage without proportional benefit
-            breaks_used = float(np.sum(self._break_mask))
-            if breaks_used > 0:
-                efficiency_ratio = reduction_percentage / (breaks_used / float(self.H * self.W))
-                if efficiency_ratio > 10:  # Very efficient fuel break placement
+            # Prevent division by zero
+            if self._initial_burned > 0:
+                reduction_percentage = (self._initial_burned - burned) / self._initial_burned
+                if reduction_percentage > 0.3:  # 30% reduction
                     reward += 0.1
-                elif efficiency_ratio < 2:  # Inefficient placement
-                    reward -= 0.05
+                if reduction_percentage > 0.5:  # 50% reduction  
+                    reward += 0.2
+                if reduction_percentage > 0.7:  # 70% reduction (very efficient!)
+                    reward += 0.3
+                    
+                # 5. FUEL BREAK EFFICIENCY: Penalize excessive fuel break usage without proportional benefit
+                breaks_used = float(np.sum(self._break_mask))
+                if breaks_used > 0:
+                    breaks_coverage = breaks_used / float(self.H * self.W)
+                    if breaks_coverage > 0:  # Prevent division by zero
+                        efficiency_ratio = reduction_percentage / breaks_coverage
+                        if efficiency_ratio > 10:  # Very efficient fuel break placement
+                            reward += 0.1
+                        elif efficiency_ratio < 2:  # Inefficient placement
+                            reward -= 0.05
+            else:
+                reduction_percentage = 0.0  # Fallback when initial_burned is 0
 
             done = self._used >= self.break_budget
             
             # EPISODE END BONUS: Strong reward for final total efficiency
             if done:
-                final_reduction_percentage = (self._initial_burned - burned) / self._initial_burned
-                episode_efficiency_bonus = final_reduction_percentage * 2.0  # Strong final reward
-                
-                # Extra bonus for exceptional performance
-                if final_reduction_percentage > 0.8:  # 80% reduction - exceptional!
-                    episode_efficiency_bonus += 1.0
-                    print(f"🏆 EXCEPTIONAL PERFORMANCE: {final_reduction_percentage*100:.1f}% burned area reduction!")
-                elif final_reduction_percentage > 0.6:  # 60% reduction - excellent
-                    episode_efficiency_bonus += 0.5
-                    print(f"🌟 EXCELLENT PERFORMANCE: {final_reduction_percentage*100:.1f}% burned area reduction!")
-                elif final_reduction_percentage > 0.4:  # 40% reduction - good
-                    episode_efficiency_bonus += 0.2
-                    print(f"✅ GOOD PERFORMANCE: {final_reduction_percentage*100:.1f}% burned area reduction!")
-                
-                reward += episode_efficiency_bonus
-                
-                # Log final episode statistics
-                breaks_used = float(np.sum(self._break_mask))
-                efficiency_per_break = final_reduction_percentage / (breaks_used / float(self.H * self.W)) if breaks_used > 0 else 0
-                print(f"📊 Episode Summary: Initial={self._initial_burned:.1f}, Final={burned:.1f}, "
-                      f"Reduction={final_reduction_percentage*100:.1f}%, Breaks={int(breaks_used)}, "
-                      f"Efficiency={efficiency_per_break:.2f}")
+                if self._initial_burned > 0:
+                    final_reduction_percentage = (self._initial_burned - burned) / self._initial_burned
+                    episode_efficiency_bonus = final_reduction_percentage * 2.0  # Strong final reward
+                    
+                    # Extra bonus for exceptional performance
+                    if final_reduction_percentage > 0.8:  # 80% reduction - exceptional!
+                        episode_efficiency_bonus += 1.0
+                        print(f"🏆 EXCEPTIONAL PERFORMANCE: {final_reduction_percentage*100:.1f}% burned area reduction!")
+                    elif final_reduction_percentage > 0.6:  # 60% reduction - excellent
+                        episode_efficiency_bonus += 0.5
+                        print(f"🌟 EXCELLENT PERFORMANCE: {final_reduction_percentage*100:.1f}% burned area reduction!")
+                    elif final_reduction_percentage > 0.4:  # 40% reduction - good
+                        episode_efficiency_bonus += 0.2
+                        print(f"✅ GOOD PERFORMANCE: {final_reduction_percentage*100:.1f}% burned area reduction!")
+                    
+                    reward += episode_efficiency_bonus
+                    
+                    # Log final episode statistics
+                    breaks_used = float(np.sum(self._break_mask))
+                    breaks_coverage = breaks_used / float(self.H * self.W) if (self.H * self.W) > 0 else 0
+                    efficiency_per_break = final_reduction_percentage / breaks_coverage if breaks_coverage > 0 else 0
+                    print(f"📊 Episode Summary: Initial={self._initial_burned:.1f}, Final={burned:.1f}, "
+                          f"Reduction={final_reduction_percentage*100:.1f}%, Breaks={int(breaks_used)}, "
+                          f"Efficiency={efficiency_per_break:.2f}")
+                else:
+                    final_reduction_percentage = 0.0
+                    print(f"⚠️  Episode Summary: Initial burned area was 0, no reduction possible")
             
             obs = self._make_obs()
 
+            # Ensure all info values are scalars to prevent array truth value errors
+            initial_burned_val = getattr(self, '_initial_burned', burned)
+            reduction_pct = final_reduction_percentage if done and self._initial_burned > 0 else (
+                (initial_burned_val - burned) / initial_burned_val if initial_burned_val > 0 else 0.0
+            )
+            
             return obs, reward, done, False, {
-                "burned": burned, 
-                "new_cells": new_cells.size,
-                "initial_burned": getattr(self, '_initial_burned', burned),
-                "reduction_percentage": (getattr(self, '_initial_burned', burned) - burned) / getattr(self, '_initial_burned', burned) if hasattr(self, '_initial_burned') else 0.0
+                "burned": float(burned), 
+                "new_cells": int(new_cells.size),
+                "initial_burned": float(initial_burned_val),
+                "reduction_percentage": float(reduction_pct)
             }
             
         except Exception as e:
-            print(f"Environment step failed: {e}")
+            # Better error reporting to understand what's failing
+            import traceback
+            error_details = f"{type(e).__name__}: {e}"
+            if not hasattr(self, '_error_details_count'):
+                self._error_details_count = {}
+            
+            if error_details not in self._error_details_count:
+                self._error_details_count[error_details] = 0
+            self._error_details_count[error_details] += 1
+            
+            # Only print first few occurrences of each error type
+            if self._error_details_count[error_details] <= 3:
+                print(f"🚨 Environment step failed: {error_details}")
+                if self._error_details_count[error_details] == 1:
+                    print(f"📍 Full traceback for first occurrence:")
+                    traceback.print_exc()
+            elif self._error_details_count[error_details] == 10:
+                print(f"🔄 Environment error '{error_details}' occurred 10 times, suppressing further messages")
+            
             # Return safe fallback values
             obs = self._make_obs()
             reward = -1.0
             done = True
-            return obs, reward, done, False, {"burned": 1000.0, "new_cells": 0, "error": True}
+            return obs, reward, done, False, {
+                "burned": 1000.0, 
+                "new_cells": 0, 
+                "error": True,
+                "error_type": str(type(e).__name__),
+                "initial_burned": 1000.0,
+                "reduction_percentage": 0.0
+            }
 
     def render(self, save_string=None):
         import matplotlib.pyplot as plt
