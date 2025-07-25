@@ -539,65 +539,114 @@ def main():
         for step in range(STEPS_PER_EP):
             acts = choose_actions_batch(model, obs, K_STEPS, eps, DEVICE)
             
-            try:
-                vec_env.step_async(acts)
-                
-                # Add timeout to prevent hanging
-                import signal
-                def timeout_handler(signum, frame):
-                    raise TimeoutError("Environment step timed out")
-                
-                # Set timeout for step_wait (30 seconds)
-                old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(30)
-                
+            # Multi-layer protection against hanging environments
+            step_success = False
+            max_retries = 3
+            
+            for retry in range(max_retries):
                 try:
-                    out = vec_env.step_wait()
-                finally:
-                    signal.alarm(0)
-                    signal.signal(signal.SIGALRM, old_handler)
+                    # Start the async step
+                    vec_env.step_async(acts)
+                    
+                    # Use threading-based timeout (more reliable than signal)
+                    import threading
+                    import queue
+                    
+                    result_queue = queue.Queue()
+                    exception_queue = queue.Queue()
+                    
+                    def step_wait_thread():
+                        try:
+                            result = vec_env.step_wait()
+                            result_queue.put(result)
+                        except Exception as e:
+                            exception_queue.put(e)
+                    
+                    # Start the step_wait in a separate thread
+                    step_thread = threading.Thread(target=step_wait_thread)
+                    step_thread.daemon = True
+                    step_thread.start()
+                    
+                    # Wait for result with timeout (reduced to 10 seconds)
+                    step_thread.join(timeout=10.0)
+                    
+                    if step_thread.is_alive():
+                        # Thread is still running - environment hung
+                        print(f"Environment step timed out (retry {retry + 1}/{max_retries})")
+                        raise TimeoutError("Environment step timed out after 10 seconds")
+                    
+                    # Check for exceptions
+                    if not exception_queue.empty():
+                        raise exception_queue.get()
+                    
+                    # Get the result
+                    if not result_queue.empty():
+                        out = result_queue.get()
+                        step_success = True
+                        break
+                    else:
+                        raise RuntimeError("No result from environment step")
                 
-                # Handle different gym API versions
-                if len(out) == 5:
-                    nxt, rews, dones, truncs, infos = out
-                    dones = np.logical_or(dones, truncs)
-                else:
-                    nxt, rews, dones, infos = out
-
-                rews = np.asarray(rews, dtype=np.float32)
-                if rews.shape != (N_ENVS,):
-                    rews = rews.reshape(N_ENVS, -1).sum(axis=1)
-                dones = np.asarray(dones, dtype=bool)
-                
-            except (EOFError, BrokenPipeError, ConnectionResetError, TimeoutError) as e:
-                print(f"Environment communication error: {e}")
-                print("Recreating environments...")
-                
-                # Close the problematic environment with force
+                except (EOFError, BrokenPipeError, ConnectionResetError, TimeoutError, RuntimeError) as e:
+                    print(f"Environment error (retry {retry + 1}/{max_retries}): {e}")
+                    
+                    if retry == max_retries - 1:
+                        # Final retry failed - recreate environments
+                        print("All retries failed. Recreating environments...")
+                        break
+                    
+                    # Quick retry with brief pause
+                    import time
+                    time.sleep(1)
+                    continue
+            
+            # If step failed, recreate environments
+            if not step_success:
+                # Force close the hanging environment
                 try:
                     vec_env.close()
                 except:
                     pass
                 
-                # Kill any hanging processes
+                # Aggressive process cleanup
                 import multiprocessing
+                import os
+                
+                # Try to use psutil for better process management if available
+                try:
+                    import psutil
+                    current_process = psutil.Process(os.getpid())
+                    for child in current_process.children(recursive=True):
+                        try:
+                            child.terminate()
+                            child.wait(timeout=2)
+                        except:
+                            try:
+                                child.kill()
+                            except:
+                                pass
+                except ImportError:
+                    # Fallback without psutil
+                    print("psutil not available, using basic process cleanup")
+                
+                # Clean up multiprocessing
                 for p in multiprocessing.active_children():
                     try:
                         p.terminate()
-                        p.join(timeout=2)
+                        p.join(timeout=1)
                         if p.is_alive():
                             p.kill()
                     except:
                         pass
                 
-                # Wait a moment for cleanup
+                # Wait for cleanup
                 import time
                 time.sleep(2)
                 
-                # Recreate environments
+                # Recreate environments with fresh rasters
                 selected_rasters = raster_manager.get_random_rasters(N_ENVS)
                 env_fns = [
-                    make_env_with_raster(raster, BUDGET, K_STEPS, SIMS, seed=i + ep * N_ENVS + step) 
+                    make_env_with_raster(raster, BUDGET, K_STEPS, SIMS, seed=i + ep * N_ENVS + step + retry) 
                     for i, raster in enumerate(selected_rasters)
                 ]
                 vec_env = AsyncVectorEnv(env_fns)
@@ -606,6 +655,18 @@ def main():
                 
                 # Skip this step and continue
                 continue
+            
+            # Handle different gym API versions
+            if len(out) == 5:
+                nxt, rews, dones, truncs, infos = out
+                dones = np.logical_or(dones, truncs)
+            else:
+                nxt, rews, dones, infos = out
+
+            rews = np.asarray(rews, dtype=np.float32)
+            if rews.shape != (N_ENVS,):
+                rews = rews.reshape(N_ENVS, -1).sum(axis=1)
+            dones = np.asarray(dones, dtype=bool)
 
             # Store transitions
             for i in range(N_ENVS):

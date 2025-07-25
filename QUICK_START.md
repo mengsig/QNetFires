@@ -153,9 +153,33 @@ Your enhanced QAgent system is now ready for large-scale wildfire fuel-break pla
 ✅ Save the best performing models  
 
 **Start training with:** 
-- `python3 train_sync.py` (recommended for stability)
-- `python3 train_robust.py` (with automatic restart)
-- `python3 src/Train.py` (enhanced with error handling)
+
+#### **🟢 For Maximum Stability (Recommended):**
+```bash
+python3 train_sync.py 2>&1 | tee training.log
+```
+- Never hangs, simple, reliable
+- Slower (no parallelism) but 100% stable
+
+#### **🟡 For Balanced Performance:**
+```bash
+python3 src/Train.py 2>&1 | tee training.log
+```
+- Good performance with enhanced hanging protection
+- Threading-based timeout and automatic recovery
+
+#### **🔵 For Ultimate Robustness:**
+```bash
+python3 train_robust_async.py 2>&1 | tee training.log
+```
+- Process pool with built-in timeout handling
+- Handles any number of environments without hanging
+
+#### **⚡ For Legacy/Fallback:**
+```bash
+python3 train_robust.py 2>&1 | tee training.log
+```
+- Global timeout wrapper with automatic restart
 
 ### 4. Monitor Training Progress
 ```bash
