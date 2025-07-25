@@ -97,7 +97,174 @@ class ReplayBuffer:
         return len(self.buf)
 
 
+# ---------- Spatial Analysis Helper Functions ----------
+def compute_spatial_metrics(actions_batch, H, W, device="cpu"):
+    """
+    Compute spatial structure metrics for fuel break placement.
+    
+    Args:
+        actions_batch: Batch of action masks (B, H*W)
+        H, W: Grid dimensions
+        device: Computing device
+    
+    Returns:
+        connectivity_score: How connected the fuel breaks are (higher = more line-like)
+        compactness_penalty: Penalty for blob-like structures (higher = more blob-like)
+        edge_ratio: Ratio of perimeter to area (higher = more line-like)
+    """
+    batch_size = actions_batch.shape[0]
+    actions_2d = actions_batch.view(batch_size, H, W).float()
+    
+    # Connectivity score: count adjacent fuel breaks
+    # Use convolution to count neighbors
+    kernel = torch.tensor([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=torch.float32).to(device)
+    kernel = kernel.view(1, 1, 3, 3)
+    
+    # Pad actions for convolution
+    padded_actions = torch.nn.functional.pad(actions_2d.unsqueeze(1), (1, 1, 1, 1), mode='constant', value=0)
+    neighbor_counts = torch.nn.functional.conv2d(padded_actions, kernel, padding=0)
+    neighbor_counts = neighbor_counts.squeeze(1)
+    
+    # Connectivity: sum of (fuel_break * number_of_neighbors)
+    connectivity = torch.sum(actions_2d * neighbor_counts, dim=(1, 2))
+    total_breaks = torch.sum(actions_2d, dim=(1, 2)) + 1e-6  # Avoid division by zero
+    connectivity_score = connectivity / total_breaks
+    
+    # Compactness penalty: blob-like structures have high area-to-perimeter ratio
+    # Compute perimeter using edge detection
+    dx_kernel = torch.tensor([[-1, 0, 1]], dtype=torch.float32).view(1, 1, 1, 3).to(device)
+    dy_kernel = torch.tensor([[-1], [0], [1]], dtype=torch.float32).view(1, 1, 3, 1).to(device)
+    
+    dx = torch.nn.functional.conv2d(padded_actions, dx_kernel, padding=(0, 1))
+    dy = torch.nn.functional.conv2d(padded_actions, dy_kernel, padding=(1, 0))
+    
+    edges = torch.sqrt(dx.squeeze(1)**2 + dy.squeeze(1)**2)
+    perimeter = torch.sum(edges * actions_2d, dim=(1, 2))
+    
+    # Edge ratio: perimeter / area (higher for lines, lower for blobs)
+    edge_ratio = perimeter / total_breaks
+    
+    # Compactness penalty: area^2 / perimeter (higher for blobs)
+    compactness_penalty = (total_breaks**2) / (perimeter + 1e-6)
+    
+    return connectivity_score, compactness_penalty, edge_ratio
+
+
 # ---------- Enhanced Loss Functions ----------
+def compute_spatial_aware_q_loss(model, target_model, batch, gamma, k, budget, global_step=0, weights=None, device="cpu"):
+    """
+    Spatially-aware Q-learning loss that encourages line-like fuel break patterns.
+    
+    This loss function specifically addresses the local minima problem where the model
+    creates blob-like fuel break patterns instead of optimal line-like patterns.
+    
+    Args:
+        model: Online Q-network
+        target_model: Target Q-network
+        batch: Batch of transitions
+        gamma: Discount factor
+        k: Number of fuel breaks per step
+        budget: Total fuel break budget
+        global_step: Current training step (for curriculum learning)
+        weights: Importance sampling weights (for prioritized replay)
+        device: Computing device
+    
+    Returns:
+        loss: Combined loss value
+        td_errors: TD errors for priority updates
+        metrics: Dictionary of loss components for logging
+    """
+    obs_t = torch.from_numpy(np.stack(batch.obs)).float().to(device)
+    next_t = torch.from_numpy(np.stack(batch.next_obs)).float().to(device)
+    a_t = torch.from_numpy(np.stack(batch.action)).long().to(device)
+    r_t = torch.from_numpy(np.array(batch.reward, dtype=np.float32)).to(device)
+    d_t = torch.from_numpy(np.array(batch.done, dtype=np.uint8)).to(device)
+
+    batch_size, action_dim = a_t.shape
+    H = W = int(np.sqrt(action_dim))  # Assuming square grid
+    
+    q_all = model(obs_t)
+    mask = a_t.bool()
+    q_sel = torch.sum(q_all * mask.float(), dim=1) / k
+
+    with torch.no_grad():
+        # Double DQN: use online network to select actions, target network to evaluate
+        next_online = model(next_t)
+        best_idx = torch.argmax(next_online, dim=1)
+        next_target = target_model(next_t)
+        q_next = next_target.gather(1, best_idx.unsqueeze(1)).squeeze(1)
+        target = r_t + gamma * (1 - d_t.float()) * q_next
+
+    # Standard TD loss
+    td_errors = target - q_sel
+    td_loss = td_errors.pow(2)
+
+    # === SPATIAL STRUCTURE COMPONENTS ===
+    
+    # Compute spatial metrics for current actions
+    connectivity_score, compactness_penalty, edge_ratio = compute_spatial_metrics(
+        mask.float(), H, W, device
+    )
+    
+    # 1. Connectivity Bonus: Reward connected fuel breaks (lines > scattered points)
+    connectivity_bonus = 0.2 * connectivity_score * torch.abs(td_errors)
+    
+    # 2. Anti-Blob Penalty: Penalize compact, blob-like structures
+    blob_penalty = 0.15 * compactness_penalty * td_errors.pow(2)
+    
+    # 3. Line Structure Bonus: Reward high edge-to-area ratio (line-like shapes)
+    line_bonus = 0.1 * edge_ratio * torch.abs(td_errors)
+    
+    # 4. Efficiency Factor: Still encourage using fewer breaks when possible
+    num_actions = torch.sum(mask.float(), dim=1)
+    efficiency_factor = 1.0 - (num_actions / budget)
+    efficiency_bonus = 0.05 * efficiency_factor * torch.abs(td_errors)
+    
+    # 5. Exploration Regularization: Add curriculum-based exploration
+    # Gradually reduce exploration as training progresses
+    exploration_factor = max(0.1, 1.0 - global_step / 50000)  # Decay over 50k steps
+    exploration_noise = 0.1 * exploration_factor * torch.randn_like(td_errors) * torch.abs(td_errors)
+    
+    # 6. Q-value Regularization: Prevent overconfident predictions
+    q_regularization = 0.01 * torch.clamp(torch.abs(q_sel) - 1.0, min=0) ** 2
+    
+    # === COMBINED LOSS ===
+    # Positive terms increase loss (penalties)
+    # Negative terms decrease loss (bonuses)
+    combined_loss = (td_loss + 
+                    blob_penalty + 
+                    q_regularization + 
+                    exploration_noise -
+                    connectivity_bonus - 
+                    line_bonus - 
+                    efficiency_bonus)
+
+    if weights is not None:
+        loss = (weights * combined_loss).mean()
+    else:
+        loss = combined_loss.mean()
+
+    # Detailed metrics for monitoring
+    metrics = {
+        'td_loss': td_loss.mean().item(),
+        'connectivity_bonus': connectivity_bonus.mean().item(),
+        'blob_penalty': blob_penalty.mean().item(),
+        'line_bonus': line_bonus.mean().item(),
+        'efficiency_bonus': efficiency_bonus.mean().item(),
+        'exploration_noise': exploration_noise.mean().item(),
+        'q_regularization': q_regularization.mean().item(),
+        'combined_loss': combined_loss.mean().item(),
+        'avg_q_value': q_sel.mean().item(),
+        'avg_target': target.mean().item(),
+        'avg_connectivity': connectivity_score.mean().item(),
+        'avg_compactness': compactness_penalty.mean().item(),
+        'avg_edge_ratio': edge_ratio.mean().item(),
+        'exploration_factor': exploration_factor
+    }
+
+    return loss, td_errors.abs().detach().cpu().numpy(), metrics
+
+
 def compute_enhanced_q_loss(model, target_model, batch, gamma, k, budget, weights=None, device="cpu"):
     """
     Enhanced Q-learning loss that balances effectiveness and efficiency.
@@ -458,6 +625,7 @@ def main():
     USE_ENHANCED_MODEL = True  # Use EnhancedQNet instead of basic QNet
     USE_DUELING = False  # Set to True to use DuelingQNet
     USE_LR_SCHEDULER = True
+    USE_SPATIAL_LOSS = True  # Use spatial-aware loss to encourage line structures
 
     # Memory optimization settings
     MEMORY_EFFICIENT = True  # Enable memory optimizations
@@ -581,6 +749,11 @@ def main():
     else:
         buf = ReplayBuffer(BUFFER_CAP)
         print("Using standard Experience Replay")
+        
+    if USE_SPATIAL_LOSS:
+        print("🎯 Using Spatial-Aware Loss Function (anti-blob, pro-line)")
+    else:
+        print("📊 Using Enhanced Loss Function (basic efficiency/effectiveness)")
 
     global_step = 0
     eps = START_EPS
@@ -597,6 +770,13 @@ def main():
     efficiency_bonus_win = deque(maxlen=1000)
     effectiveness_penalty_win = deque(maxlen=1000)
     q_value_win = deque(maxlen=1000)
+    
+    # Spatial structure tracking
+    connectivity_win = deque(maxlen=1000)
+    compactness_win = deque(maxlen=1000)
+    edge_ratio_win = deque(maxlen=1000)
+    blob_penalty_win = deque(maxlen=1000)
+    line_bonus_win = deque(maxlen=1000)
 
     # Training metrics
     best_avg_reward = float("-inf")
@@ -763,17 +943,27 @@ def main():
                 if USE_PRIORITIZED_REPLAY:
                     batch, indices, weights = buf.sample(BATCH_SIZE)
                     weights = weights.to(DEVICE)
-                    loss, td_errors, metrics = compute_enhanced_q_loss(
-                        model, tgt, batch, GAMMA, K_STEPS, BUDGET, weights, DEVICE
-                    )
+                    if USE_SPATIAL_LOSS:
+                        loss, td_errors, metrics = compute_spatial_aware_q_loss(
+                            model, tgt, batch, GAMMA, K_STEPS, BUDGET, global_step, weights, DEVICE
+                        )
+                    else:
+                        loss, td_errors, metrics = compute_enhanced_q_loss(
+                            model, tgt, batch, GAMMA, K_STEPS, BUDGET, weights, DEVICE
+                        )
                     buf.update_priorities(
                         indices, td_errors + 1e-6
                     )  # Small epsilon for numerical stability
                 else:
                     batch = buf.sample(BATCH_SIZE)
-                    loss, _, metrics = compute_enhanced_q_loss(
-                        model, tgt, batch, GAMMA, K_STEPS, BUDGET, device=DEVICE
-                    )
+                    if USE_SPATIAL_LOSS:
+                        loss, _, metrics = compute_spatial_aware_q_loss(
+                            model, tgt, batch, GAMMA, K_STEPS, BUDGET, global_step, device=DEVICE
+                        )
+                    else:
+                        loss, _, metrics = compute_enhanced_q_loss(
+                            model, tgt, batch, GAMMA, K_STEPS, BUDGET, device=DEVICE
+                        )
 
                 # Gradient accumulation
                 if MEMORY_EFFICIENT and GRADIENT_ACCUMULATION_STEPS > 1:
@@ -801,6 +991,13 @@ def main():
                             efficiency_bonus_win.append(metrics.get('efficiency_bonus', 0.0))
                             effectiveness_penalty_win.append(metrics.get('effectiveness_penalty', 0.0))
                             q_value_win.append(metrics.get('avg_q_value', 0.0))
+                            
+                            # Track spatial metrics
+                            connectivity_win.append(metrics.get('avg_connectivity', 0.0))
+                            compactness_win.append(metrics.get('avg_compactness', 0.0))
+                            edge_ratio_win.append(metrics.get('avg_edge_ratio', 0.0))
+                            blob_penalty_win.append(metrics.get('blob_penalty', 0.0))
+                            line_bonus_win.append(metrics.get('line_bonus', 0.0))
                         
                         accumulated_loss = 0.0
                         accumulation_steps = 0
@@ -827,6 +1024,13 @@ def main():
                         efficiency_bonus_win.append(metrics.get('efficiency_bonus', 0.0))
                         effectiveness_penalty_win.append(metrics.get('effectiveness_penalty', 0.0))
                         q_value_win.append(metrics.get('avg_q_value', 0.0))
+                        
+                        # Track spatial metrics
+                        connectivity_win.append(metrics.get('avg_connectivity', 0.0))
+                        compactness_win.append(metrics.get('avg_compactness', 0.0))
+                        edge_ratio_win.append(metrics.get('avg_edge_ratio', 0.0))
+                        blob_penalty_win.append(metrics.get('blob_penalty', 0.0))
+                        line_bonus_win.append(metrics.get('line_bonus', 0.0))
 
                     # Update target network
                     if global_step % TARGET_SYNC_EVERY == 0:
@@ -845,6 +1049,13 @@ def main():
         mean_effectiveness_penalty = float(np.mean(effectiveness_penalty_win)) if len(effectiveness_penalty_win) > 0 else 0.0
         mean_q_value = float(np.mean(q_value_win)) if len(q_value_win) > 0 else 0.0
         
+        # Spatial structure statistics
+        mean_connectivity = float(np.mean(connectivity_win)) if len(connectivity_win) > 0 else 0.0
+        mean_compactness = float(np.mean(compactness_win)) if len(compactness_win) > 0 else 0.0
+        mean_edge_ratio = float(np.mean(edge_ratio_win)) if len(edge_ratio_win) > 0 else 0.0
+        mean_blob_penalty = float(np.mean(blob_penalty_win)) if len(blob_penalty_win) > 0 else 0.0
+        mean_line_bonus = float(np.mean(line_bonus_win)) if len(line_bonus_win) > 0 else 0.0
+        
         current_lr = opt.param_groups[0]["lr"] if USE_LR_SCHEDULER else LR
 
         # Enhanced logging with performance metrics
@@ -852,9 +1063,28 @@ def main():
         print(f"Training: steps={STEPS_PER_EP * N_ENVS}, eps={eps:.3f}, lr={current_lr:.2e}")
         print(f"Rewards: mean={mean_reward:.3f}, episodes_completed={len(episode_rewards)}")
         print(f"Environment: burned_area={mean_burned_area:.1f}, fuel_breaks_used={mean_fuel_breaks:.1f}, ep_length={mean_episode_length:.1f}")
-        print(f"Loss Components: total={mean_loss:.4f}, td={mean_td_loss:.4f}, eff_bonus={mean_efficiency_bonus:.4f}, eff_penalty={mean_effectiveness_penalty:.4f}")
+        print(f"Loss Components: total={mean_loss:.4f}, td={mean_td_loss:.4f}, eff_bonus={mean_efficiency_bonus:.4f}")
+        print(f"Spatial Structure: connectivity={mean_connectivity:.3f}, edge_ratio={mean_edge_ratio:.3f}, compactness={mean_compactness:.3f}")
+        print(f"Spatial Incentives: line_bonus={mean_line_bonus:.4f}, blob_penalty={mean_blob_penalty:.4f}")
         print(f"Q-Values: mean={mean_q_value:.3f}")
-        print("=" * 50)
+        
+        # Visual indicators for spatial structure quality
+        if mean_connectivity > 2.0:
+            structure_indicator = "🔗 CONNECTED"
+        elif mean_connectivity > 1.0:
+            structure_indicator = "➖ PARTIAL"
+        else:
+            structure_indicator = "⚪ SCATTERED"
+            
+        if mean_edge_ratio > 3.0:
+            shape_indicator = "📏 LINE-LIKE"
+        elif mean_edge_ratio > 2.0:
+            shape_indicator = "🔄 MIXED"
+        else:
+            shape_indicator = "🔵 BLOB-LIKE"
+            
+        print(f"Structure Quality: {structure_indicator} | Shape Quality: {shape_indicator}")
+        print("=" * 60)
 
         # Track best performance (considering both reward and burned area)
         performance_improved = False
@@ -877,6 +1107,21 @@ def main():
             print(f"💾 Saving best model (reward: {best_avg_reward:.3f}, burned_area: {best_avg_burned_area:.1f})")
         else:
             episodes_since_improvement += 1
+            
+        # Anti-local-minima mechanisms
+        if episodes_since_improvement > 20:  # No improvement for 20 episodes
+            print("⚠️  No improvement for 20 episodes - applying anti-local-minima measures:")
+            
+            # 1. Epsilon boost to increase exploration
+            if eps < 0.3:
+                eps = min(0.5, eps + 0.2)
+                print(f"   📈 Boosting epsilon to {eps:.3f} for exploration")
+            
+            # 2. Reset target network to encourage new learning
+            if episodes_since_improvement > 30:
+                print("   🔄 Resetting target network to break learning stagnation")
+                tgt.load_state_dict(model.state_dict())
+                episodes_since_improvement = 0  # Reset counter after intervention
 
         # Regular checkpointing
         if ep % SAVE_EVERY == 0:
