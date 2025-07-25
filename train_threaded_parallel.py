@@ -111,7 +111,12 @@ class ThreadedVectorEnv:
                 reduction = (self.fuel_breaks_used / self.budget) * 100.0
                 burned = max(50.0, base_burned - reduction)
                 
-                info = {"burned": burned, "new_cells": int(new_breaks), "dummy": True}
+                info = {
+                    "burned": burned, 
+                    "new_cells": int(new_breaks), 
+                    "total_fuel_breaks": self.fuel_breaks_used,
+                    "dummy": True
+                }
                 return obs, reward, done, False, info
                 
         return DummyEnv(budget)
@@ -290,7 +295,47 @@ def make_env_with_raster(raster, budget, kstep, sims, seed):
                 num_simulations=min(sims, 2),  # Keep simulations low
                 seed=seed,
             )
-            return env
+            
+            # Wrap with a custom wrapper that doesn't auto-reset
+            class BudgetEnforcementWrapper:
+                def __init__(self, env):
+                    self.env = env
+                    self.is_done = False
+                    self.total_fuel_breaks = 0
+                    
+                def reset(self):
+                    self.is_done = False
+                    self.total_fuel_breaks = 0
+                    return self.env.reset()
+                    
+                def step(self, action):
+                    if self.is_done:
+                        # Return dummy result if already done
+                        obs = self.env._make_obs()
+                        return obs, 0.0, True, False, {"burned": 0.0, "new_cells": 0, "budget_exceeded": True}
+                    
+                    obs, reward, done, truncated, info = self.env.step(action)
+                    
+                    # Track fuel breaks
+                    new_cells = info.get("new_cells", 0)
+                    self.total_fuel_breaks += new_cells
+                    
+                    # Enforce budget strictly
+                    if self.total_fuel_breaks >= budget:
+                        done = True
+                        self.is_done = True
+                        
+                    # Update info with accurate count
+                    info["total_fuel_breaks"] = self.total_fuel_breaks
+                    
+                    return obs, reward, done, truncated, info
+                    
+                def close(self):
+                    if hasattr(self.env, 'close'):
+                        self.env.close()
+            
+            return BudgetEnforcementWrapper(env)
+            
         except Exception as e:
             print(f"Environment creation failed: {e}")
             raise
@@ -354,7 +399,7 @@ def main():
     
     # Reduced complexity for stability
     EPISODES = 1000
-    STEPS_PER_EP = 2
+    STEPS_PER_EP = 30  # Allow episodes to complete naturally (250 budget / 10 per step = 25 steps)
     BUFFER_CAP = 50_000
     BATCH_SIZE = 32
     GAMMA = 0.99
@@ -439,6 +484,7 @@ def main():
                 print("Continuing with existing environments...")
         
         episode_rewards = []
+        active_envs = [True] * N_ENVS  # Track which environments are still active
         
         for step in range(STEPS_PER_EP):
             # Choose actions
@@ -448,7 +494,8 @@ def main():
             # Environment step
             next_obs, rewards, dones, truncated, infos = vec_env.step(actions)
             
-            # Store transitions
+            # Store transitions and track completion
+            completed_this_step = 0
             for i in range(N_ENVS):
                 buffer.push(obs[i], actions[i], rewards[i], next_obs[i], dones[i])
                 
@@ -456,11 +503,25 @@ def main():
                 if infos[i] and "burned" in infos[i]:
                     burned_area_window.append(safe_scalar(infos[i]["burned"]))
                 
-                if dones[i]:
+                if dones[i] and active_envs[i]:
                     episode_rewards.append(rewards[i])
+                    active_envs[i] = False  # Mark as completed
+                    completed_this_step += 1
+                    
+                    # Log completion with fuel break count
+                    total_breaks = infos[i].get("total_fuel_breaks", 0) if infos[i] else 0
+                    burned = safe_scalar(infos[i].get("burned", 0)) if infos[i] else 0
+                    is_dummy = infos[i].get("dummy", False) if infos[i] else False
+                    env_type = "DUMMY" if is_dummy else "REAL"
+                    print(f"🎯 Environment {i} ({env_type}) completed: Burned={burned:.1f}, Total Breaks={total_breaks}/{BUDGET}, Step={step+1}")
             
             obs = next_obs
             global_step += N_ENVS
+            
+            # If all environments are done, break early
+            if not any(active_envs):
+                print(f"✅ All environments completed at step {step+1}")
+                break
             
             # Training step
             if len(buffer) >= BATCH_SIZE:
@@ -486,8 +547,12 @@ def main():
         mean_loss = np.mean(loss_window) if loss_window else 0.0
         mean_burned = np.mean(burned_area_window) if burned_area_window else 0.0
         
+        # Check budget compliance
+        budget_compliant = 0
+        total_completed = len(episode_rewards)
+        
         print(f"[Episode {episode}] Reward: {mean_reward:.3f} Loss: {mean_loss:.3f} "
-              f"Burned: {mean_burned:.1f} Eps: {eps:.3f} Steps: {global_step}")
+              f"Burned: {mean_burned:.1f} Eps: {eps:.3f} Completed: {total_completed}/{N_ENVS}")
         
         # Save best model
         if mean_reward > best_reward:
