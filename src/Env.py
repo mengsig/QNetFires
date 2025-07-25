@@ -162,16 +162,37 @@ class FuelBreakEnv(gym.Env):
                 
                 burned = max(70.0, min(250.0, base_burned - reduction + noise))
 
-            if self._last_burned is None:
-                # first step, no prior baseline -> 0 shaping or full negative
-                incremental = burned
+            # Track burned area history for better reward calculation
+            if not hasattr(self, '_initial_burned'):
+                self._initial_burned = burned  # Baseline without any fuel breaks
+                self._burn_history = [burned]
             else:
+                self._burn_history.append(burned)
+            
+            # Calculate different reward components
+            if self._last_burned is None:
+                # First step: small negative reward for current burned area
+                incremental_reward = -burned / float(self.H * self.W) * 0.1
+                total_reduction_reward = 0.0
+            else:
+                # Incremental improvement reward (smaller weight)
                 incremental = burned - self._last_burned
+                incremental_reward = -incremental / float(self.H * self.W) * 0.3
+                
+                # Total reduction reward (main objective - higher weight)
+                total_reduction = self._initial_burned - burned
+                total_reduction_reward = total_reduction / float(self.H * self.W) * 0.7
 
             self._last_burned = burned
 
-            # reward: improvement (negative burned). Example shaping:
-            reward = -incremental / float(self.H * self.W)
+            # Combined reward: focus on total burned area reduction
+            reward = incremental_reward + total_reduction_reward
+            
+            # Bonus for achieving low burned area (encourage aggressive fuel break placement)
+            if burned < self._initial_burned * 0.7:  # 30% reduction
+                reward += 0.1
+            if burned < self._initial_burned * 0.5:  # 50% reduction  
+                reward += 0.2
 
             done = self._used >= self.break_budget
             obs = self._make_obs()
