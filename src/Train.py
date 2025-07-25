@@ -711,14 +711,27 @@ def main():
                 # Track per-step metrics
                 if info_i and isinstance(info_i, dict):
                     if "burned" in info_i:
-                        burned_area_win.append(float(info_i["burned"]))
+                        burned_val = info_i["burned"]
+                        if isinstance(burned_val, (np.ndarray, list)):
+                            burned_val = burned_val.item() if hasattr(burned_val, 'item') else burned_val[0]
+                        burned_area_win.append(float(burned_val))
                     if "new_cells" in info_i:
-                        fuel_breaks_used_win.append(float(info_i["new_cells"]))
+                        cells_val = info_i["new_cells"]
+                        if isinstance(cells_val, (np.ndarray, list)):
+                            cells_val = cells_val.item() if hasattr(cells_val, 'item') else cells_val[0]
+                        fuel_breaks_used_win.append(float(cells_val))
                 
                 # Track episode completion metrics
                 if info_i and "episode_return" in info_i:
-                    episode_reward = float(info_i["episode_return"])
-                    episode_length = int(info_i.get("episode_length", 0))
+                    reward_val = info_i["episode_return"]
+                    if isinstance(reward_val, (np.ndarray, list)):
+                        reward_val = reward_val.item() if hasattr(reward_val, 'item') else reward_val[0]
+                    episode_reward = float(reward_val)
+                    
+                    length_val = info_i.get("episode_length", 0)
+                    if isinstance(length_val, (np.ndarray, list)):
+                        length_val = length_val.item() if hasattr(length_val, 'item') else length_val[0]
+                    episode_length = int(length_val)
                     
                     # Ensure we have valid values before adding to windows
                     if not (np.isnan(episode_reward) or np.isinf(episode_reward)):
@@ -732,8 +745,11 @@ def main():
                         print(f"[env {i}] Invalid episode reward: {episode_reward}, skipping...")
                 else:
                     # Track intermediate step rewards to prevent all NaN
-                    if not (np.isnan(rews[i]) or np.isinf(rews[i])):
-                        reward_win.append(float(rews[i]))
+                    reward_val = rews[i]
+                    if isinstance(reward_val, (np.ndarray, list)):
+                        reward_val = reward_val.item() if hasattr(reward_val, 'item') else reward_val[0]
+                    if not (np.isnan(reward_val) or np.isinf(reward_val)):
+                        reward_win.append(float(reward_val))
 
             obs = nxt
             global_step += N_ENVS
