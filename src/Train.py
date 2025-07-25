@@ -190,6 +190,10 @@ class RobustAutoResetWrapper(gym.Wrapper):
         self._error_count = 0
         self._max_errors = 5
         self._last_burned = None  # Track burned area
+        self._env_id = id(self) % 1000  # Unique environment ID for debugging
+        self._is_dummy = hasattr(env, 'dummy') or 'Dummy' in str(type(env))
+        self._step_count = 0
+        self._burned_history = []  # Track burned area history for debugging
 
     def reset(self, **kw):
         self._ret = 0
@@ -212,6 +216,7 @@ class RobustAutoResetWrapper(gym.Wrapper):
             # Handle both scalar and array rewards
             self._ret += safe_scalar(r)
             self._len += 1
+            self._step_count += 1
             
             # Always ensure info dict exists and has burned area
             if info is None:
@@ -220,12 +225,24 @@ class RobustAutoResetWrapper(gym.Wrapper):
             
             # Track burned area for reporting - handle arrays
             if "burned" in info:
-                self._last_burned = safe_scalar(info["burned"], 100.0)
-                info["burned"] = self._last_burned
+                burned_val = safe_scalar(info["burned"], 100.0)
+                self._last_burned = burned_val
+                info["burned"] = burned_val
+                
+                # Track burned area history for debugging
+                self._burned_history.append(burned_val)
+                if len(self._burned_history) > 10:  # Keep last 10 values
+                    self._burned_history.pop(0)
+                    
             elif self._last_burned is not None:
                 info["burned"] = self._last_burned
             else:
                 info["burned"] = 100.0  # Default fallback
+                
+            # Add environment metadata for debugging
+            info["env_id"] = self._env_id
+            info["is_dummy"] = self._is_dummy
+            info["step_count"] = self._step_count
             
             if d or tr:
                 info["episode_return"] = self._ret
@@ -233,7 +250,9 @@ class RobustAutoResetWrapper(gym.Wrapper):
                 burned_scalar = safe_scalar(info.get('burned', 100))
                 burned_str = f"{burned_scalar:.1f}"
                 if self._len > 1:  # Only print if episode had multiple steps
-                    print(f"Episode completed: Return={self._ret:.3f}, Length={self._len}, Burned={burned_str}")
+                    env_type = "DUMMY" if self._is_dummy else "REAL"
+                    burned_range = f"[{min(self._burned_history):.1f}-{max(self._burned_history):.1f}]" if len(self._burned_history) > 1 else ""
+                    print(f"Episode completed: Return={self._ret:.3f}, Length={self._len}, Burned={burned_str} {burned_range}, Type={env_type}, ID={self._env_id}")
                 try:
                     obs, _ = self.env.reset()
                 except Exception as e:
@@ -355,11 +374,19 @@ class DummyEnv(gym.Env):
         for i in range(4, 8):
             obs[i] = np.random.choice([0.0, 1.0], (self.H, self.W), p=[0.97, 0.03])
         
-        # Realistic burned area simulation: starts high, decreases with fuel breaks
-        base_burned = 160.0
-        reduction_per_break = 6.0
-        total_breaks_placed = self.steps_taken * 2  # Assume some breaks per step
-        burned_area = max(80.0, base_burned - total_breaks_placed * reduction_per_break)
+        # More realistic burned area simulation with environment variation
+        # Use environment-specific seed for consistency but variety across environments
+        env_seed = hash(str(id(self))) % 10000  # Unique per environment instance
+        np.random.seed(env_seed + self.steps_taken)  # Vary by step but keep consistent
+        
+        # Base burned area with environment variation
+        base_burned = 170.0 + np.random.uniform(-25, 25)  # 145-195 base per environment
+        reduction_per_break = 5.0 + np.random.uniform(-1, 1)  # Slightly varied effectiveness
+        total_breaks_placed = self.steps_taken * placed  # Use actual placed breaks
+        
+        # Add some realistic noise
+        noise = np.random.uniform(-8, 8)
+        burned_area = max(75.0, min(220.0, base_burned - total_breaks_placed * reduction_per_break + noise))
         
         info = {
             "burned": burned_area,
@@ -725,7 +752,6 @@ def main():
                 
                 # Aggressive process cleanup
                 import multiprocessing
-                import os
                 
                 # Try to use psutil for better process management if available
                 try:
@@ -801,24 +827,32 @@ def main():
                     episode_rewards.append(episode_reward)
                     reward_win.append(episode_reward)
                     
-                    # Safe burned value handling
+                    # Safe burned value handling with environment info
                     burned_val = info_i.get('burned', None)
                     burned_scalar = safe_scalar(burned_val, fallback=None)
                     burned_str = f"{burned_scalar:.1f}" if burned_scalar is not None else 'N/A'
                     
+                    # Add environment diagnostics
+                    env_type = "DUMMY" if info_i.get('is_dummy', False) else "REAL"
+                    env_id = info_i.get('env_id', i)
+                    
                     print(f"[env {i}] Episode completed: R={episode_reward:.3f} L={info_i['episode_length']} "
-                          f"Burned={burned_str}")
+                          f"Burned={burned_str} Type={env_type} ID={env_id}")
                 elif dones[i]:
                     # Episode ended but no return recorded - use accumulated step rewards
                     step_reward = safe_scalar(rews[i])
                     
-                    # Safe burned value handling
+                    # Safe burned value handling with environment info
                     burned_val = info_i.get('burned', None) if info_i else None
                     burned_scalar = safe_scalar(burned_val, fallback=None)
                     burned_str = f"{burned_scalar:.1f}" if burned_scalar is not None else 'N/A'
                     
+                    # Add environment diagnostics
+                    env_type = "DUMMY" if (info_i and info_i.get('is_dummy', False)) else "REAL"
+                    env_id = info_i.get('env_id', i) if info_i else i
+                    
                     print(f"[env {i}] Episode ended: Step_reward={step_reward:.3f} "
-                          f"Burned={burned_str}")
+                          f"Burned={burned_str} Type={env_type} ID={env_id}")
 
             obs = nxt
             global_step += N_ENVS
@@ -890,6 +924,15 @@ def main():
         # Burned area (fire spread metric)
         mean_burned_area = float(np.mean(burned_area_win)) if burned_area_win else float("nan")
         
+        # Calculate burned area statistics for debugging
+        if burned_area_win:
+            recent_burned = list(burned_area_win)[-50:]  # Last 50 values
+            min_burned = min(recent_burned)
+            max_burned = max(recent_burned)
+            std_burned = np.std(recent_burned)
+        else:
+            min_burned = max_burned = std_burned = float("nan")
+        
         # Use step reward as primary metric if episode rewards not available
         primary_reward = mean_episode_reward if not np.isnan(mean_episode_reward) else mean_step_reward
         
@@ -897,7 +940,8 @@ def main():
         
         print(f"[MetaEp {ep}] steps={STEPS_PER_EP * N_ENVS} eps={eps:.3f} "
               f"loss={mean_loss:.4f} ep_reward={mean_episode_reward:.3f} "
-              f"step_reward={mean_step_reward:.4f} burned_area={mean_burned_area:.1f} lr={current_lr:.2e}")
+              f"step_reward={mean_step_reward:.4f} burned_area={mean_burned_area:.1f} "
+              f"[{min_burned:.0f}-{max_burned:.0f}±{std_burned:.0f}] lr={current_lr:.2e}")
         
         # Track best performance using primary reward metric
         if not np.isnan(primary_reward) and primary_reward > best_avg_reward:
