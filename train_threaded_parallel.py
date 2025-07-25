@@ -268,7 +268,7 @@ class SimpleReplayBuffer:
     def push(self, obs, action, reward, next_obs, done):
         # Ensure consistent data types
         obs = obs.astype(np.float32) if hasattr(obs, 'astype') else np.array(obs, dtype=np.float32)
-        action = action.astype(np.float32) if hasattr(action, 'astype') else np.array(action, dtype=np.float32)
+        action = action.astype(np.float32) if hasattr(action, 'astype') else np.array(action, dtype=np.float32)  # Convert int8 to float32 for buffer
         reward = float(reward)
         next_obs = next_obs.astype(np.float32) if hasattr(next_obs, 'astype') else np.array(next_obs, dtype=np.float32)
         done = bool(done)
@@ -295,6 +295,7 @@ def make_env_with_raster(raster, budget, kstep, sims, seed):
                 num_simulations=min(sims, 2),  # Keep simulations low
                 seed=seed,
             )
+            
             
             # Wrap with a custom wrapper that doesn't auto-reset
             class BudgetEnforcementWrapper:
@@ -355,14 +356,14 @@ def choose_actions_batch(model, obs_np, k, eps, device="cpu"):
         for i in range(N):
             if np.random.rand() < eps:
                 # Random action
-                action = np.zeros(HxW)
+                action = np.zeros(HxW, dtype=np.int8)
                 indices = np.random.choice(HxW, size=min(k, HxW), replace=False)
                 action[indices] = 1
             else:
                 # Greedy action
                 q_i = q_vals[i].cpu().numpy()
                 top_indices = np.argsort(q_i)[-k:]
-                action = np.zeros(HxW)
+                action = np.zeros(HxW, dtype=np.int8)
                 action[top_indices] = 1
             
             actions.append(action)
