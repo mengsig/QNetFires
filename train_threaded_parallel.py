@@ -54,7 +54,7 @@ class ThreadedVectorEnv:
         self.env_fns = env_fns
         self.num_envs = len(env_fns)
         self.envs = [None] * self.num_envs
-        self.max_workers = max_workers or min(self.num_envs, 8)  # Limit threads
+        self.max_workers = max_workers or min(self.num_envs, 16)  # Limit threads for stability
         
         # Initialize environments
         self._create_environments()
@@ -244,6 +244,12 @@ class SimpleReplayBuffer:
         self.buffer = deque(maxlen=capacity)
     
     def push(self, obs, action, reward, next_obs, done):
+        # Ensure consistent data types
+        obs = obs.astype(np.float32) if hasattr(obs, 'astype') else np.array(obs, dtype=np.float32)
+        action = action.astype(np.float32) if hasattr(action, 'astype') else np.array(action, dtype=np.float32)
+        reward = float(reward)
+        next_obs = next_obs.astype(np.float32) if hasattr(next_obs, 'astype') else np.array(next_obs, dtype=np.float32)
+        done = bool(done)
         self.buffer.append(Transition(obs, action, reward, next_obs, done))
     
     def sample(self, batch_size):
@@ -303,11 +309,12 @@ def choose_actions_batch(model, obs_np, k, eps, device="cpu"):
 
 def compute_q_loss(model, target_model, batch, gamma, device="cpu"):
     """Compute Q-learning loss."""
-    obs_batch = torch.stack([torch.from_numpy(t.obs) for t in batch]).to(device)
-    action_batch = torch.stack([torch.from_numpy(t.action) for t in batch]).to(device)
-    reward_batch = torch.tensor([t.reward for t in batch], dtype=torch.float32).to(device)
-    next_obs_batch = torch.stack([torch.from_numpy(t.next_obs) for t in batch]).to(device)
-    done_batch = torch.tensor([t.done for t in batch], dtype=torch.bool).to(device)
+    # Ensure all tensors are float32 and properly converted
+    obs_batch = torch.stack([torch.from_numpy(t.obs.astype(np.float32)) for t in batch]).to(device)
+    action_batch = torch.stack([torch.from_numpy(t.action.astype(np.float32)) for t in batch]).to(device)
+    reward_batch = torch.tensor([float(t.reward) for t in batch], dtype=torch.float32).to(device)
+    next_obs_batch = torch.stack([torch.from_numpy(t.next_obs.astype(np.float32)) for t in batch]).to(device)
+    done_batch = torch.tensor([bool(t.done) for t in batch], dtype=torch.bool).to(device)
     
     # Current Q-values
     current_q = model(obs_batch)
@@ -317,7 +324,7 @@ def compute_q_loss(model, target_model, batch, gamma, device="cpu"):
     with torch.no_grad():
         next_q = target_model(next_obs_batch)
         next_q_max = next_q.max(dim=1)[0]
-        target_q = reward_batch + gamma * next_q_max * (~done_batch)
+        target_q = reward_batch + gamma * next_q_max * (~done_batch).float()
     
     # Compute loss
     loss = nn.MSELoss()(current_q_action, target_q)
@@ -342,7 +349,7 @@ def main():
     SAVE_EVERY = 25
     
     # Environment parameters - optimized for stability
-    N_ENVS = 8  # Reduced for stability
+    N_ENVS = 16  # Reasonable for threading (user had 64 but that's too many threads)
     BUDGET = 200
     K_STEPS = 10
     SIMS = 1  # Minimal simulations for stability
