@@ -783,14 +783,19 @@ def main():
                         raise RuntimeError("No result from environment step")
                 
                 except (EOFError, BrokenPipeError, ConnectionResetError, TimeoutError, RuntimeError) as e:
-                    print(f"Environment error (retry {retry + 1}/{max_retries}): {e}")
+                    print(f"🚨 Environment error (retry {retry + 1}/{max_retries}): {type(e).__name__}: {e}")
+                    
+                    # For EOFError and pipe issues, immediately recreate environments
+                    if isinstance(e, (EOFError, BrokenPipeError, ConnectionResetError)):
+                        print("🔄 Pipe corruption detected - immediately recreating all environments")
+                        break  # Skip retries, go straight to recreation
                     
                     if retry == max_retries - 1:
                         # Final retry failed - recreate environments
-                        print("All retries failed. Recreating environments...")
+                        print("⚠️  All retries failed. Recreating environments...")
                         break
                     
-                    # Quick retry with brief pause
+                    # Quick retry with brief pause for non-pipe errors
                     import time
                     time.sleep(1)
                     continue
@@ -837,15 +842,65 @@ def main():
                 import time
                 time.sleep(2)
                 
+                # Track AsyncVectorEnv failures
+                if not hasattr(main, '_async_failures'):
+                    main._async_failures = 0
+                main._async_failures += 1
+                
+                print(f"🔄 Recreating environments (failure #{main._async_failures})")
+                
+                # If AsyncVectorEnv keeps failing, fall back to synchronous
+                if main._async_failures >= 3:
+                    print("⚠️  AsyncVectorEnv failing repeatedly. Consider using train_sync.py for stability.")
+                    print("🔄 Attempting one more AsyncVectorEnv recreation with reduced complexity...")
+                    
+                    # Reduce complexity for stability
+                    effective_n_envs = max(4, N_ENVS // 2)  # Reduce environment count
+                    effective_sims = 1  # Minimal simulations
+                    print(f"🔧 Reducing to {effective_n_envs} environments with {effective_sims} simulations")
+                else:
+                    effective_n_envs = N_ENVS
+                    effective_sims = SIMS
+                
                 # Recreate environments with fresh rasters
-                selected_rasters = raster_manager.get_random_rasters(N_ENVS)
-                env_fns = [
-                    make_env_with_raster(raster, BUDGET, K_STEPS, SIMS, seed=i + ep * N_ENVS + step + retry) 
-                    for i, raster in enumerate(selected_rasters)
-                ]
-                vec_env = AsyncVectorEnv(env_fns)
-                reset_out = vec_env.reset()
-                obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
+                try:
+                    selected_rasters = raster_manager.get_random_rasters(effective_n_envs)
+                    env_fns = [
+                        make_env_with_raster(raster, BUDGET, K_STEPS, effective_sims, seed=i + ep * N_ENVS + step + main._async_failures) 
+                        for i, raster in enumerate(selected_rasters)
+                    ]
+                    vec_env = AsyncVectorEnv(env_fns)
+                    reset_out = vec_env.reset()
+                    obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
+                    
+                    # Update N_ENVS if we reduced it
+                    if effective_n_envs != N_ENVS:
+                        N_ENVS = effective_n_envs
+                        print(f"✅ Successfully recreated {N_ENVS} environments")
+                    else:
+                        print(f"✅ Successfully recreated all {N_ENVS} environments")
+                    
+                except Exception as recreation_error:
+                    print(f"❌ Environment recreation failed: {recreation_error}")
+                    print("💡 Recommendation: Stop training and use train_sync.py instead")
+                    print("🔄 Attempting to continue with minimal setup...")
+                    
+                    # Last resort: create minimal environment setup
+                    try:
+                        selected_rasters = raster_manager.get_random_rasters(2)  # Minimal 2 environments
+                        env_fns = [
+                            make_env_with_raster(raster, BUDGET, K_STEPS, 1, seed=i + ep * 1000) 
+                            for i, raster in enumerate(selected_rasters)
+                        ]
+                        vec_env = AsyncVectorEnv(env_fns)
+                        reset_out = vec_env.reset()
+                        obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
+                        N_ENVS = 2
+                        print(f"⚠️  Running with minimal setup: {N_ENVS} environments")
+                    except Exception as final_error:
+                        print(f"💥 Critical failure: {final_error}")
+                        print("🛑 Training cannot continue. Please use train_sync.py")
+                        raise
                 
                 # Skip this step and continue
                 continue
@@ -974,6 +1029,42 @@ def main():
                     if global_step % TARGET_SYNC_EVERY == 0:
                         tgt.load_state_dict(model.state_dict())
 
+        # Periodic environment health check (every 50 episodes)
+        if ep > 0 and ep % 50 == 0:
+            print(f"🔍 Environment health check at episode {ep}...")
+            
+            # Check if we've had recent failures
+            recent_failures = getattr(main, '_async_failures', 0)
+            if recent_failures > 0:
+                print(f"⚠️  {recent_failures} AsyncVectorEnv failures detected so far")
+                if recent_failures >= 5:
+                    print("💡 Consider switching to train_sync.py for better stability")
+            else:
+                print("✅ No AsyncVectorEnv failures detected")
+            
+            # Proactive recreation every 100 episodes to prevent pipe corruption
+            if ep % 100 == 0 and ep > 0:
+                print(f"🔄 Proactive environment recreation at episode {ep} (prevents pipe corruption)")
+                try:
+                    vec_env.close()
+                except:
+                    pass
+                
+                # Brief cleanup
+                import time
+                time.sleep(1)
+                
+                # Recreate with fresh rasters
+                selected_rasters = raster_manager.get_random_rasters(N_ENVS)
+                env_fns = [
+                    make_env_with_raster(raster, BUDGET, K_STEPS, SIMS, seed=i + ep * N_ENVS + 9999) 
+                    for i, raster in enumerate(selected_rasters)
+                ]
+                vec_env = AsyncVectorEnv(env_fns)
+                reset_out = vec_env.reset()
+                obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
+                print(f"✅ Proactively recreated {N_ENVS} environments")
+        
         # Episode statistics with multiple metrics
         mean_loss = float(np.mean(loss_win)) if loss_win else float("nan")
         
