@@ -174,7 +174,7 @@ def main():
     N_ENVS = 8  # Fewer environments to reduce complexity
     BUDGET = 200
     K_STEPS = 10
-    SIMS = 5  # Fewer simulations for stability
+    SIMS = 2  # Minimal simulations for maximum stability
     
     # Model settings
     USE_ENHANCED_MODEL = False  # Use basic model for stability

@@ -489,7 +489,7 @@ def main():
     N_ENVS = 16  # Reduced from 32 to save memory
     BUDGET = 200
     K_STEPS = 10
-    SIMS = 10  # Reduced from 25 to improve stability
+    SIMS = 2   # Reduced for stability (fire simulation often fails with higher values)
     
     # Raster management
     MAX_RASTERS = 500
