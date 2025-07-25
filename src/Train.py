@@ -403,7 +403,7 @@ class DummyEnv(gym.Env):
 
 
 def make_env_with_raster(raster, budget, kstep, sims, seed):
-    """Create environment with specific raster data."""
+    """Create environment with specific raster data - no dummy fallback."""
     def thunk():
         # Set random seed for reproducibility in subprocess
         import random
@@ -411,56 +411,79 @@ def make_env_with_raster(raster, budget, kstep, sims, seed):
         random.seed(seed)
         np.random.seed(seed)
         
-        try:
-            # Validate raster data first
-            if not isinstance(raster, dict):
-                raise ValueError("Raster must be a dictionary")
-            
-            required_keys = ['slp', 'asp', 'fbfm', 'fireline_north', 'fireline_east', 'fireline_south', 'fireline_west']
-            for key in required_keys:
-                if key not in raster:
-                    raise ValueError(f"Missing required raster key: {key}")
-                if not isinstance(raster[key], np.ndarray):
-                    raise ValueError(f"Raster key {key} must be numpy array")
-            
-            # Reduce simulations if they're causing issues
-            effective_sims = max(1, min(sims, 3))  # Cap at 3 simulations
-            
-            env = FuelBreakEnv(
-                raster,
-                break_budget=budget,
-                break_step=kstep,
-                num_simulations=effective_sims,
-                seed=seed,
-            )
-            
-            # Test the environment with a simple step
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                obs, _ = env.reset()
+                # Validate raster data first
+                if not isinstance(raster, dict):
+                    raise ValueError("Raster must be a dictionary")
+                
+                required_keys = ['slp', 'asp', 'fbfm', 'fireline_north', 'fireline_east', 'fireline_south', 'fireline_west']
+                for key in required_keys:
+                    if key not in raster:
+                        raise ValueError(f"Missing required raster key: {key}")
+                    if not isinstance(raster[key], np.ndarray):
+                        raise ValueError(f"Raster key {key} must be numpy array")
+                    # Validate array properties
+                    if raster[key].size == 0:
+                        raise ValueError(f"Raster key {key} is empty")
+                    if not np.isfinite(raster[key]).all():
+                        print(f"Warning: Raster key {key} contains non-finite values, cleaning...")
+                        raster[key] = np.nan_to_num(raster[key], nan=0.0, posinf=1.0, neginf=0.0)
+                
+                # Start with minimal simulations and increase if successful
+                if attempt == 0:
+                    effective_sims = 1  # Very conservative first attempt
+                elif attempt == 1:
+                    effective_sims = min(2, sims)  # Slightly more
+                else:
+                    effective_sims = min(3, sims)  # Full attempt
+                
+                print(f"Creating environment (attempt {attempt + 1}/{max_retries}, sims={effective_sims})")
+                
+                env = FuelBreakEnv(
+                    raster,
+                    break_budget=budget,
+                    break_step=kstep,
+                    num_simulations=effective_sims,
+                    seed=seed,
+                )
+                
+                # Test the environment with a simple step
+                print(f"Testing environment functionality...")
+                obs, info = env.reset()
+                if obs is None or obs.size == 0:
+                    raise RuntimeError("Environment reset returned empty observation")
+                
+                # Test with minimal action
                 test_action = np.zeros(obs.shape[-2] * obs.shape[-1])
                 test_action[0] = 1  # Place one fuel break
-                env.step(test_action)
-                env.reset()  # Reset after test
-            except Exception as test_e:
-                if not hasattr(thunk, '_test_errors'):
-                    thunk._test_errors = 0
-                thunk._test_errors += 1
-                if thunk._test_errors <= 2:
-                    print(f"Environment test failed: {test_e}, using dummy environment")
-                return DummyEnv(budget, kstep, raster)
-            
-            return RobustAutoResetWrapper(env)
-            
-        except Exception as e:
-            # Only print the first few creation failures to reduce spam
-            if not hasattr(thunk, '_creation_errors'):
-                thunk._creation_errors = 0
-            thunk._creation_errors += 1
-            
-            if thunk._creation_errors <= 2:
-                print(f"Environment creation failed: {type(e).__name__}: {e}, using dummy environment")
-            
-            return DummyEnv(budget, kstep, raster)
+                
+                obs2, reward, done, truncated, info = env.step(test_action)
+                if obs2 is None or obs2.size == 0:
+                    raise RuntimeError("Environment step returned empty observation")
+                if not isinstance(reward, (int, float, np.number)):
+                    raise RuntimeError(f"Environment step returned invalid reward type: {type(reward)}")
+                if info is None or not isinstance(info, dict):
+                    raise RuntimeError("Environment step returned invalid info")
+                
+                # Reset after test
+                env.reset()
+                print(f"Environment test successful!")
+                
+                return RobustAutoResetWrapper(env)
+                
+            except Exception as e:
+                print(f"Environment creation attempt {attempt + 1} failed: {type(e).__name__}: {e}")
+                if attempt < max_retries - 1:
+                    print(f"Retrying with different parameters...")
+                    import time
+                    time.sleep(0.1)  # Brief pause between retries
+                else:
+                    print(f"All {max_retries} attempts failed!")
+                    # Instead of dummy env, raise the error - this will force investigation
+                    raise RuntimeError(f"Failed to create environment after {max_retries} attempts. Last error: {e}")
+    
     return thunk
 
 
@@ -597,17 +620,47 @@ def main():
     # Get initial batch of rasters
     selected_rasters = raster_manager.get_random_rasters(N_ENVS)
     
-    # Create environments with selected rasters
-    env_fns = [
-        make_env_with_raster(raster, BUDGET, K_STEPS, SIMS, seed=i) 
-        for i, raster in enumerate(selected_rasters)
-    ]
+    # Create environments with selected rasters - with robust error handling
+    print(f"Creating {N_ENVS} environments...")
+    env_fns = []
+    successful_envs = 0
+    
+    for i, raster in enumerate(selected_rasters):
+        try:
+            env_fn = make_env_with_raster(raster, BUDGET, K_STEPS, SIMS, seed=i)
+            # Test the environment creation immediately
+            test_env = env_fn()
+            test_obs, _ = test_env.reset()
+            print(f"Environment {i}: ✅ Created successfully")
+            env_fns.append(env_fn)
+            successful_envs += 1
+        except Exception as e:
+            print(f"Environment {i}: ❌ Failed to create: {type(e).__name__}: {e}")
+            # If we can't create any environments, this is a critical error
+            if successful_envs == 0 and i > N_ENVS // 2:
+                raise RuntimeError(f"Failed to create more than half of the environments. "
+                                 f"This indicates a serious issue with the environment setup. "
+                                 f"Check pyretechnics installation and raster data.")
+    
+    if successful_envs == 0:
+        raise RuntimeError("Failed to create any environments! Check your setup.")
+    
+    if successful_envs < N_ENVS:
+        print(f"⚠️  Only created {successful_envs}/{N_ENVS} environments successfully")
+        print(f"Adjusting N_ENVS to {successful_envs}")
+        N_ENVS = successful_envs
+    
+    print(f"Creating AsyncVectorEnv with {N_ENVS} environments...")
     vec_env = AsyncVectorEnv(env_fns)
 
+    print("Resetting all environments...")
     reset_out = vec_env.reset()
     obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
-    N_ENVS = obs.shape[0]
+    actual_n_envs = obs.shape[0]
     _, C, H, W = obs.shape
+    
+    print(f"Successfully initialized {actual_n_envs} environments with observation shape: {obs.shape}")
+    N_ENVS = actual_n_envs  # Update to actual number
 
     # Initialize model with memory considerations
     if USE_DUELING:
@@ -930,6 +983,19 @@ def main():
             min_burned = min(recent_burned)
             max_burned = max(recent_burned)
             std_burned = np.std(recent_burned)
+            
+            # Check for suspicious patterns
+            if max_burned > 500:  # Very high burned areas suggest fallback values
+                high_count = sum(1 for b in recent_burned if b > 400)
+                if high_count > len(recent_burned) * 0.3:  # More than 30% are high
+                    print(f"⚠️  Warning: {high_count}/{len(recent_burned)} recent burned areas > 400 (possible fallback values)")
+            
+            # Check for identical values (suggests dummy environments)
+            from collections import Counter
+            value_counts = Counter([round(b, 1) for b in recent_burned])
+            most_common_value, most_common_count = value_counts.most_common(1)[0]
+            if most_common_count > len(recent_burned) * 0.5:  # More than 50% identical
+                print(f"⚠️  Warning: {most_common_count}/{len(recent_burned)} burned areas are identical ({most_common_value}) - possible dummy environments")
         else:
             min_burned = max_burned = std_burned = float("nan")
         
