@@ -291,25 +291,53 @@ def main():
             for i in range(N_ENVS):
                 buf.push(obs[i], acts[i], rews[i], nxt[i], dones[i])
                 
-                # Always track step rewards
-                step_reward_win.append(float(rews[i]))
+                # Always track step rewards - handle arrays safely
+                reward_val = rews[i]
+                if hasattr(reward_val, '__len__') and len(reward_val) > 1:
+                    reward_val = np.mean(reward_val)
+                step_reward_win.append(float(reward_val))
                 
-                # Track burned area if available
+                # Track burned area if available - handle arrays safely
                 if infos[i] and "burned" in infos[i]:
-                    burned_area_win.append(float(infos[i]["burned"]))
+                    burned_val = infos[i]["burned"]
+                    if hasattr(burned_val, '__len__') and len(burned_val) > 1:
+                        burned_val = np.mean(burned_val)
+                    burned_area_win.append(float(burned_val))
                 
                 # Track episode completion
                 if infos[i] and "episode_return" in infos[i]:
-                    episode_reward = float(infos[i]['episode_return'])
+                    episode_return_val = infos[i]['episode_return']
+                    if hasattr(episode_return_val, '__len__') and len(episode_return_val) > 1:
+                        episode_return_val = np.mean(episode_return_val)
+                    episode_reward = float(episode_return_val)
                     reward_win.append(episode_reward)
-                    burned_val = infos[i].get('burned', 'N/A')
-                    burned_str = f"{float(burned_val):.1f}" if burned_val != 'N/A' else 'N/A'
+                    
+                    # Safe burned value handling
+                    burned_val = infos[i].get('burned', None)
+                    if burned_val is None or (isinstance(burned_val, str) and burned_val == 'N/A'):
+                        burned_str = 'N/A'
+                    else:
+                        if hasattr(burned_val, '__len__') and len(burned_val) > 1:
+                            burned_val = np.mean(burned_val)
+                        burned_str = f"{float(burned_val):.1f}"
+                    
                     print(f"[env {i}] Episode completed: R={episode_reward:.3f} L={infos[i].get('episode_length', 0)} "
                           f"Burned={burned_str}")
                 elif dones[i]:
-                    step_reward = float(rews[i])
-                    burned_val = infos[i].get('burned', 'N/A') if infos[i] else 'N/A'
-                    burned_str = f"{float(burned_val):.1f}" if burned_val != 'N/A' else 'N/A'
+                    reward_val = rews[i]
+                    if hasattr(reward_val, '__len__') and len(reward_val) > 1:
+                        reward_val = np.mean(reward_val)
+                    step_reward = float(reward_val)
+                    
+                    # Safe burned value handling
+                    burned_val = infos[i].get('burned', None) if infos[i] else None
+                    if burned_val is None or (isinstance(burned_val, str) and burned_val == 'N/A'):
+                        burned_str = 'N/A'
+                    else:
+                        if hasattr(burned_val, '__len__') and len(burned_val) > 1:
+                            burned_val = np.mean(burned_val)
+                        burned_str = f"{float(burned_val):.1f}"
+                    
                     print(f"[env {i}] Episode ended: Step_reward={step_reward:.3f} "
                           f"Burned={burned_str}")
             

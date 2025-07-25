@@ -14,6 +14,29 @@ import time
 from Env import FuelBreakEnv
 from Model import QNet, EnhancedQNet, DuelingQNet
 
+# Utility function to safely convert values to scalars
+def safe_scalar(value, fallback=0.0):
+    """Convert value to scalar, handling arrays, None, and string values safely."""
+    if value is None:
+        return fallback
+    if isinstance(value, str):
+        if value == 'N/A':
+            return fallback
+        try:
+            return float(value)
+        except ValueError:
+            return fallback
+    if hasattr(value, '__len__') and len(value) > 1:
+        # It's an array-like object with multiple elements
+        try:
+            return float(np.mean(value))
+        except:
+            return fallback
+    try:
+        return float(value)
+    except:
+        return fallback
+
 mp.set_start_method("spawn", force=True)
 
 # -------- project path hack --------
@@ -185,7 +208,9 @@ class RobustAutoResetWrapper(gym.Wrapper):
     def step(self, a):
         try:
             obs, r, d, tr, info = self.env.step(a)
-            self._ret += float(r)
+            
+            # Handle both scalar and array rewards
+            self._ret += safe_scalar(r)
             self._len += 1
             
             # Always ensure info dict exists and has burned area
@@ -193,9 +218,10 @@ class RobustAutoResetWrapper(gym.Wrapper):
                 info = {}
             info = dict(info)
             
-            # Track burned area for reporting
+            # Track burned area for reporting - handle arrays
             if "burned" in info:
-                self._last_burned = info["burned"]
+                self._last_burned = safe_scalar(info["burned"], 100.0)
+                info["burned"] = self._last_burned
             elif self._last_burned is not None:
                 info["burned"] = self._last_burned
             else:
@@ -204,10 +230,10 @@ class RobustAutoResetWrapper(gym.Wrapper):
             if d or tr:
                 info["episode_return"] = self._ret
                 info["episode_length"] = self._len
-                burned_val = info.get('burned', 100)
-                burned_str = f"{float(burned_val):.1f}" if burned_val is not None else "100.0"
+                burned_scalar = safe_scalar(info.get('burned', 100))
+                burned_str = f"{burned_scalar:.1f}"
                 if self._len > 1:  # Only print if episode had multiple steps
-                    print(f"Episode completed: Return={float(self._ret):.3f}, Length={self._len}, Burned={burned_str}")
+                    print(f"Episode completed: Return={self._ret:.3f}, Length={self._len}, Burned={burned_str}")
                 try:
                     obs, _ = self.env.reset()
                 except Exception as e:
@@ -240,8 +266,9 @@ class RobustAutoResetWrapper(gym.Wrapper):
                 obs = self._get_dummy_obs()
                 reward = -1.0
                 done = True
+                
                 info = {
-                    "episode_return": self._ret, 
+                    "episode_return": safe_scalar(self._ret), 
                     "episode_length": self._len, 
                     "burned": 200.0,  # High but not extreme
                     "error": True
@@ -255,8 +282,9 @@ class RobustAutoResetWrapper(gym.Wrapper):
             obs = self._get_dummy_obs()
             reward = -0.1  # Small penalty, not catastrophic
             done = False   # Don't end episode unless necessary
+            
             info = {
-                "burned": self._last_burned if self._last_burned is not None else 150.0,
+                "burned": safe_scalar(self._last_burned, 150.0),
                 "error": True
             }
             
@@ -761,26 +789,34 @@ def main():
                 info_i = infos[i] if isinstance(infos, (list, tuple)) else infos
                 
                 # Always track step rewards (not just episode returns)
-                step_reward_win.append(float(rews[i]))
+                step_reward_win.append(safe_scalar(rews[i]))
                 
                 # Track burned area if available
                 if info_i and "burned" in info_i:
-                    burned_area_win.append(float(info_i["burned"]))
+                    burned_area_win.append(safe_scalar(info_i["burned"]))
                 
                 # Track episode completion
                 if info_i and "episode_return" in info_i:
-                    episode_reward = float(info_i['episode_return'])
+                    episode_reward = safe_scalar(info_i['episode_return'])
                     episode_rewards.append(episode_reward)
                     reward_win.append(episode_reward)
-                    burned_val = info_i.get('burned', 'N/A')
-                    burned_str = f"{float(burned_val):.1f}" if burned_val != 'N/A' else 'N/A'
+                    
+                    # Safe burned value handling
+                    burned_val = info_i.get('burned', None)
+                    burned_scalar = safe_scalar(burned_val, fallback=None)
+                    burned_str = f"{burned_scalar:.1f}" if burned_scalar is not None else 'N/A'
+                    
                     print(f"[env {i}] Episode completed: R={episode_reward:.3f} L={info_i['episode_length']} "
                           f"Burned={burned_str}")
                 elif dones[i]:
                     # Episode ended but no return recorded - use accumulated step rewards
-                    step_reward = float(rews[i])
-                    burned_val = info_i.get('burned', 'N/A') if info_i else 'N/A'
-                    burned_str = f"{float(burned_val):.1f}" if burned_val != 'N/A' else 'N/A'
+                    step_reward = safe_scalar(rews[i])
+                    
+                    # Safe burned value handling
+                    burned_val = info_i.get('burned', None) if info_i else None
+                    burned_scalar = safe_scalar(burned_val, fallback=None)
+                    burned_str = f"{burned_scalar:.1f}" if burned_scalar is not None else 'N/A'
+                    
                     print(f"[env {i}] Episode ended: Step_reward={step_reward:.3f} "
                           f"Burned={burned_str}")
 
