@@ -130,16 +130,18 @@ def compute_spatial_metrics(actions_batch, H, W, device="cpu"):
     total_breaks = torch.sum(actions_2d, dim=(1, 2)) + 1e-6  # Avoid division by zero
     connectivity_score = connectivity / total_breaks
     
-    # Compactness penalty: blob-like structures have high area-to-perimeter ratio
-    # Compute perimeter using edge detection
-    dx_kernel = torch.tensor([[-1, 0, 1]], dtype=torch.float32).view(1, 1, 1, 3).to(device)
-    dy_kernel = torch.tensor([[-1], [0], [1]], dtype=torch.float32).view(1, 1, 3, 1).to(device)
+    # Simplified perimeter calculation using neighbor differences
+    # Shift actions in 4 directions and count differences
+    actions_padded = torch.nn.functional.pad(actions_2d, (1, 1, 1, 1), mode='constant', value=0)
     
-    dx = torch.nn.functional.conv2d(padded_actions, dx_kernel, padding=(0, 1))
-    dy = torch.nn.functional.conv2d(padded_actions, dy_kernel, padding=(1, 0))
+    # Calculate differences with neighbors (edge detection)
+    diff_up = torch.abs(actions_2d - actions_padded[:, :-2, 1:-1])
+    diff_down = torch.abs(actions_2d - actions_padded[:, 2:, 1:-1])
+    diff_left = torch.abs(actions_2d - actions_padded[:, 1:-1, :-2])
+    diff_right = torch.abs(actions_2d - actions_padded[:, 1:-1, 2:])
     
-    edges = torch.sqrt(dx.squeeze(1)**2 + dy.squeeze(1)**2)
-    perimeter = torch.sum(edges * actions_2d, dim=(1, 2))
+    # Sum all edge differences (perimeter approximation)
+    perimeter = torch.sum(diff_up + diff_down + diff_left + diff_right, dim=(1, 2))
     
     # Edge ratio: perimeter / area (higher for lines, lower for blobs)
     edge_ratio = perimeter / total_breaks
