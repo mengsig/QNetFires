@@ -1,6 +1,5 @@
 import os
 import sys
-import time
 import random
 import numpy as np
 import torch
@@ -704,15 +703,20 @@ def main():
     for ep in range(1, EPISODES + 1):
         print(f"META-EP: {ep}/{EPISODES}")
         
-        # Periodic refresh disabled - was causing recreation loop
-        # Only refresh if there are actual issues, not automatically
-        if False:  # ep % 50 == 0 and raster_manager.get_num_loaded_rasters() > N_ENVS:
+        # Periodically refresh environments with new rasters
+        if ep % 10 == 0 and raster_manager.get_num_loaded_rasters() > N_ENVS:
             print("Refreshing environments with new rasters...")
-            # Refresh logic disabled for stability
+            vec_env.close()
+            selected_rasters = raster_manager.get_random_rasters(N_ENVS)
+            env_fns = [
+                make_env_with_raster(raster, BUDGET, K_STEPS, SIMS, seed=i + ep * N_ENVS) 
+                for i, raster in enumerate(selected_rasters)
+            ]
+            vec_env = AsyncVectorEnv(env_fns)
+            reset_out = vec_env.reset()
+            obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
         
         episode_rewards = []
-        print(f"🚀 Starting episode {ep} training loop...")
-        episode_start_time = time.time()
         
         for step in range(STEPS_PER_EP):
             acts = choose_actions_batch(model, obs, K_STEPS, eps, DEVICE)
@@ -982,9 +986,6 @@ def main():
                 print(f"✅ Proactively recreated {N_ENVS} environments")
         
         
-        
-        episode_duration = time.time() - episode_start_time
-        print(f"⏱️  Episode {ep} completed in {episode_duration:.1f}s")
         # Episode completion summary
         if episode_rewards:
             print(f"📊 Episode Summary: {len(episode_rewards)}/{N_ENVS} environments completed naturally")

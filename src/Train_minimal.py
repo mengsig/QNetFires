@@ -441,7 +441,7 @@ def make_env_with_raster(raster, budget, kstep, sims, seed):
                     effective_sims = min(3, sims)  # Full attempt
                 
                 # Only print when actually creating (not during env_fn setup)
-                print(f"🔧 Creating environment (attempt {attempt + 1}/{max_retries}, sims={effective_sims})")
+                # Creating environment
                 
                 env = FuelBreakEnv(
                     raster,
