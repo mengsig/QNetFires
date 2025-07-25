@@ -1,5 +1,8 @@
 import rasterio
 import numpy as np
+import os
+import random
+from typing import List, Dict, Optional
 
 """
 Utility functions for loading raster data used in fire spread modeling.
@@ -13,7 +16,7 @@ def load_raster(name):
     Parameters
     ----------
     name : str
-        Base name of the raster (without “_cropped.tif”).
+        Base name of the raster (without "_cropped.tif").
     x_interval : tuple of int (start, end), optional
         Column indices to keep (0-based, [start:end]).
     y_interval : tuple of int (start, end), optional
@@ -129,3 +132,93 @@ def load_all_rasters(filename, index, raster_dir="cropped_raster", dim=50):
             rasters[f"fireline_{direction}"] = np.zeros((dim, dim), dtype=np.float32)
 
     return rasters
+
+
+class RasterManager:
+    """
+    Manages loading and sampling from a large collection of rasters.
+    Supports loading all 500 rasters and randomly sampling for training batches.
+    """
+    
+    def __init__(self, raster_root: str, max_rasters: int = 500, dim: int = 50):
+        self.raster_root = raster_root
+        self.max_rasters = max_rasters
+        self.dim = dim
+        self.all_rasters = []
+        self.raster_indices = list(range(1, max_rasters + 1))  # Assuming indices 1-500
+        self.current_epoch_indices = []
+        self.epoch_position = 0
+        
+    def load_all_rasters(self) -> List[Dict]:
+        """
+        Load all available rasters into memory.
+        Returns list of raster dictionaries.
+        """
+        print(f"Loading {self.max_rasters} rasters from {self.raster_root}...")
+        self.all_rasters = []
+        
+        for i in range(1, self.max_rasters + 1):
+            try:
+                raster = load_all_rasters(self.raster_root, i, dim=self.dim)
+                self.all_rasters.append(raster)
+                if i % 50 == 0:
+                    print(f"Loaded {i}/{self.max_rasters} rasters...")
+            except Exception as e:
+                print(f"Warning: Could not load raster {i}: {e}")
+                
+        print(f"Successfully loaded {len(self.all_rasters)} rasters")
+        return self.all_rasters
+    
+    def get_random_rasters(self, n_envs: int) -> List[Dict]:
+        """
+        Get n_envs random rasters from the loaded collection.
+        Ensures we cycle through all rasters over multiple epochs.
+        """
+        if not self.all_rasters:
+            raise ValueError("No rasters loaded. Call load_all_rasters() first.")
+            
+        # If we need to start a new epoch, shuffle the indices
+        if self.epoch_position == 0:
+            self.current_epoch_indices = self.raster_indices.copy()
+            random.shuffle(self.current_epoch_indices)
+            print(f"Starting new epoch with {len(self.current_epoch_indices)} rasters")
+        
+        # Get the next batch of indices
+        end_pos = min(self.epoch_position + n_envs, len(self.current_epoch_indices))
+        selected_indices = self.current_epoch_indices[self.epoch_position:end_pos]
+        
+        # If we need more rasters than remaining in current epoch, wrap around
+        if len(selected_indices) < n_envs:
+            remaining_needed = n_envs - len(selected_indices)
+            # Start new epoch
+            self.current_epoch_indices = self.raster_indices.copy()
+            random.shuffle(self.current_epoch_indices)
+            selected_indices.extend(self.current_epoch_indices[:remaining_needed])
+            self.epoch_position = remaining_needed
+        else:
+            self.epoch_position = end_pos
+            
+        # Reset epoch position if we've used all rasters
+        if self.epoch_position >= len(self.current_epoch_indices):
+            self.epoch_position = 0
+            
+        # Convert indices to actual raster data
+        selected_rasters = []
+        for idx in selected_indices:
+            if idx - 1 < len(self.all_rasters):  # Convert to 0-based indexing
+                selected_rasters.append(self.all_rasters[idx - 1])
+            else:
+                # Fallback to random selection if index out of range
+                selected_rasters.append(random.choice(self.all_rasters))
+                
+        return selected_rasters
+    
+    def get_raster_by_index(self, index: int) -> Optional[Dict]:
+        """Get a specific raster by its index (1-based)."""
+        if 1 <= index <= len(self.all_rasters):
+            return self.all_rasters[index - 1]
+        return None
+    
+    def get_num_loaded_rasters(self) -> int:
+        """Get the number of successfully loaded rasters."""
+        return len(self.all_rasters)
