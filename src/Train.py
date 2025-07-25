@@ -98,8 +98,79 @@ class ReplayBuffer:
 
 
 # ---------- Enhanced Loss Functions ----------
+def compute_enhanced_q_loss(model, target_model, batch, gamma, k, budget, weights=None, device="cpu"):
+    """
+    Enhanced Q-learning loss that balances effectiveness and efficiency.
+    
+    Args:
+        model: Online Q-network
+        target_model: Target Q-network
+        batch: Batch of transitions
+        gamma: Discount factor
+        k: Number of fuel breaks per step
+        budget: Total fuel break budget
+        weights: Importance sampling weights (for prioritized replay)
+        device: Computing device
+    
+    Returns:
+        loss: Combined loss value
+        td_errors: TD errors for priority updates
+        metrics: Dictionary of loss components for logging
+    """
+    obs_t = torch.from_numpy(np.stack(batch.obs)).float().to(device)
+    next_t = torch.from_numpy(np.stack(batch.next_obs)).float().to(device)
+    a_t = torch.from_numpy(np.stack(batch.action)).long().to(device)
+    r_t = torch.from_numpy(np.array(batch.reward, dtype=np.float32)).to(device)
+    d_t = torch.from_numpy(np.array(batch.done, dtype=np.uint8)).to(device)
+
+    q_all = model(obs_t)
+    mask = a_t.bool()
+    q_sel = torch.sum(q_all * mask.float(), dim=1) / k
+
+    with torch.no_grad():
+        # Double DQN: use online network to select actions, target network to evaluate
+        next_online = model(next_t)
+        best_idx = torch.argmax(next_online, dim=1)
+        next_target = target_model(next_t)
+        q_next = next_target.gather(1, best_idx.unsqueeze(1)).squeeze(1)
+        target = r_t + gamma * (1 - d_t.float()) * q_next
+
+    # Standard TD loss
+    td_errors = target - q_sel
+    td_loss = td_errors.pow(2)
+
+    # Efficiency bonus: encourage using fewer fuel breaks when possible
+    # Count number of actions taken in each sample
+    num_actions = torch.sum(mask.float(), dim=1) / k
+    efficiency_factor = 1.0 - (num_actions / budget)  # Higher when using fewer breaks
+    efficiency_bonus = 0.1 * efficiency_factor * torch.abs(td_errors)
+    
+    # Effectiveness penalty: penalize high Q-values when rewards are poor
+    effectiveness_penalty = 0.05 * torch.clamp(q_sel - target, min=0) ** 2
+    
+    # Combined loss with balance between effectiveness and efficiency
+    combined_loss = td_loss + effectiveness_penalty - efficiency_bonus
+
+    if weights is not None:
+        loss = (weights * combined_loss).mean()
+    else:
+        loss = combined_loss.mean()
+
+    # Metrics for logging
+    metrics = {
+        'td_loss': td_loss.mean().item(),
+        'efficiency_bonus': efficiency_bonus.mean().item(),
+        'effectiveness_penalty': effectiveness_penalty.mean().item(),
+        'combined_loss': combined_loss.mean().item(),
+        'avg_q_value': q_sel.mean().item(),
+        'avg_target': target.mean().item()
+    }
+
+    return loss, td_errors.abs().detach().cpu().numpy(), metrics
+
+
 def compute_q_loss(model, target_model, batch, gamma, k, weights=None, device="cpu"):
-    """Enhanced Q-learning loss with optional importance sampling weights."""
+    """Standard Q-learning loss with optional importance sampling weights."""
     obs_t = torch.from_numpy(np.stack(batch.obs)).float().to(device)
     next_t = torch.from_numpy(np.stack(batch.next_obs)).float().to(device)
     a_t = torch.from_numpy(np.stack(batch.action)).long().to(device)
@@ -515,9 +586,21 @@ def main():
     eps = START_EPS
     loss_win = deque(maxlen=1000)
     reward_win = deque(maxlen=100)
+    
+    # Enhanced metrics tracking
+    burned_area_win = deque(maxlen=100)
+    fuel_breaks_used_win = deque(maxlen=100)
+    episode_length_win = deque(maxlen=100)
+    
+    # Loss component tracking
+    td_loss_win = deque(maxlen=1000)
+    efficiency_bonus_win = deque(maxlen=1000)
+    effectiveness_penalty_win = deque(maxlen=1000)
+    q_value_win = deque(maxlen=1000)
 
     # Training metrics
     best_avg_reward = float("-inf")
+    best_avg_burned_area = float("inf")
     episodes_since_improvement = 0
 
     # Gradient accumulation tracking
@@ -620,17 +703,37 @@ def main():
                 # Skip this step and continue
                 continue
 
-            # Store transitions
+            # Store transitions and collect metrics
             for i in range(N_ENVS):
                 buf.push(obs[i], acts[i], rews[i], nxt[i], dones[i])
                 info_i = infos[i] if isinstance(infos, (list, tuple)) else infos
+                
+                # Track per-step metrics
+                if info_i and isinstance(info_i, dict):
+                    if "burned" in info_i:
+                        burned_area_win.append(float(info_i["burned"]))
+                    if "new_cells" in info_i:
+                        fuel_breaks_used_win.append(float(info_i["new_cells"]))
+                
+                # Track episode completion metrics
                 if info_i and "episode_return" in info_i:
-                    episode_reward = info_i["episode_return"]
-                    episode_rewards.append(episode_reward)
-                    reward_win.append(episode_reward)
-                    print(
-                        f"[env {i}] R={episode_reward:.3f} L={info_i['episode_length']}"
-                    )
+                    episode_reward = float(info_i["episode_return"])
+                    episode_length = int(info_i.get("episode_length", 0))
+                    
+                    # Ensure we have valid values before adding to windows
+                    if not (np.isnan(episode_reward) or np.isinf(episode_reward)):
+                        episode_rewards.append(episode_reward)
+                        reward_win.append(episode_reward)
+                        episode_length_win.append(episode_length)
+                        
+                        print(f"[env {i}] Episode completed: R={episode_reward:.3f}, L={episode_length}, "
+                              f"Burned={info_i.get('burned', 'N/A')}")
+                    else:
+                        print(f"[env {i}] Invalid episode reward: {episode_reward}, skipping...")
+                else:
+                    # Track intermediate step rewards to prevent all NaN
+                    if not (np.isnan(rews[i]) or np.isinf(rews[i])):
+                        reward_win.append(float(rews[i]))
 
             obs = nxt
             global_step += N_ENVS
@@ -644,16 +747,16 @@ def main():
                 if USE_PRIORITIZED_REPLAY:
                     batch, indices, weights = buf.sample(BATCH_SIZE)
                     weights = weights.to(DEVICE)
-                    loss, td_errors = compute_q_loss(
-                        model, tgt, batch, GAMMA, K_STEPS, weights, DEVICE
+                    loss, td_errors, metrics = compute_enhanced_q_loss(
+                        model, tgt, batch, GAMMA, K_STEPS, BUDGET, weights, DEVICE
                     )
                     buf.update_priorities(
                         indices, td_errors + 1e-6
                     )  # Small epsilon for numerical stability
                 else:
                     batch = buf.sample(BATCH_SIZE)
-                    loss, _ = compute_q_loss(
-                        model, tgt, batch, GAMMA, K_STEPS, device=DEVICE
+                    loss, _, metrics = compute_enhanced_q_loss(
+                        model, tgt, batch, GAMMA, K_STEPS, BUDGET, device=DEVICE
                     )
 
                 # Gradient accumulation
@@ -675,6 +778,14 @@ def main():
                             scheduler.step()
 
                         loss_win.append(accumulated_loss)
+                        
+                        # Track loss components if available
+                        if 'metrics' in locals() and isinstance(metrics, dict):
+                            td_loss_win.append(metrics.get('td_loss', 0.0))
+                            efficiency_bonus_win.append(metrics.get('efficiency_bonus', 0.0))
+                            effectiveness_penalty_win.append(metrics.get('effectiveness_penalty', 0.0))
+                            q_value_win.append(metrics.get('avg_q_value', 0.0))
+                        
                         accumulated_loss = 0.0
                         accumulation_steps = 0
 
@@ -693,44 +804,83 @@ def main():
                         scheduler.step()
 
                     loss_win.append(loss.item())
+                    
+                    # Track loss components if available
+                    if 'metrics' in locals() and isinstance(metrics, dict):
+                        td_loss_win.append(metrics.get('td_loss', 0.0))
+                        efficiency_bonus_win.append(metrics.get('efficiency_bonus', 0.0))
+                        effectiveness_penalty_win.append(metrics.get('effectiveness_penalty', 0.0))
+                        q_value_win.append(metrics.get('avg_q_value', 0.0))
 
                     # Update target network
                     if global_step % TARGET_SYNC_EVERY == 0:
                         tgt.load_state_dict(model.state_dict())
 
-        # Episode statistics
-        mean_loss = float(np.mean(loss_win)) if loss_win else float("nan")
-        mean_reward = float(np.mean(reward_win)) if reward_win else float("nan")
+        # Episode statistics with robust NaN handling
+        mean_loss = float(np.mean(loss_win)) if len(loss_win) > 0 else 0.0
+        mean_reward = float(np.mean(reward_win)) if len(reward_win) > 0 else 0.0
+        mean_burned_area = float(np.mean(burned_area_win)) if len(burned_area_win) > 0 else 0.0
+        mean_fuel_breaks = float(np.mean(fuel_breaks_used_win)) if len(fuel_breaks_used_win) > 0 else 0.0
+        mean_episode_length = float(np.mean(episode_length_win)) if len(episode_length_win) > 0 else 0.0
+        
+        # Loss component statistics
+        mean_td_loss = float(np.mean(td_loss_win)) if len(td_loss_win) > 0 else 0.0
+        mean_efficiency_bonus = float(np.mean(efficiency_bonus_win)) if len(efficiency_bonus_win) > 0 else 0.0
+        mean_effectiveness_penalty = float(np.mean(effectiveness_penalty_win)) if len(effectiveness_penalty_win) > 0 else 0.0
+        mean_q_value = float(np.mean(q_value_win)) if len(q_value_win) > 0 else 0.0
+        
         current_lr = opt.param_groups[0]["lr"] if USE_LR_SCHEDULER else LR
 
-        print(
-            f"[MetaEp {ep}] steps={STEPS_PER_EP * N_ENVS} eps={eps:.3f} "
-            f"mean_loss={mean_loss:.4f} mean_reward={mean_reward:.3f} lr={current_lr:.2e}"
-        )
+        # Enhanced logging with performance metrics
+        print(f"\n=== META-EPISODE {ep}/{EPISODES} SUMMARY ===")
+        print(f"Training: steps={STEPS_PER_EP * N_ENVS}, eps={eps:.3f}, lr={current_lr:.2e}")
+        print(f"Rewards: mean={mean_reward:.3f}, episodes_completed={len(episode_rewards)}")
+        print(f"Environment: burned_area={mean_burned_area:.1f}, fuel_breaks_used={mean_fuel_breaks:.1f}, ep_length={mean_episode_length:.1f}")
+        print(f"Loss Components: total={mean_loss:.4f}, td={mean_td_loss:.4f}, eff_bonus={mean_efficiency_bonus:.4f}, eff_penalty={mean_effectiveness_penalty:.4f}")
+        print(f"Q-Values: mean={mean_q_value:.3f}")
+        print("=" * 50)
 
-        # Track best performance
+        # Track best performance (considering both reward and burned area)
+        performance_improved = False
+        
         if mean_reward > best_avg_reward:
             best_avg_reward = mean_reward
+            performance_improved = True
+            print(f"🎉 New best average reward: {best_avg_reward:.3f}")
+            
+        if mean_burned_area < best_avg_burned_area and mean_burned_area > 0:
+            best_avg_burned_area = mean_burned_area
+            performance_improved = True
+            print(f"🔥 New best (lowest) average burned area: {best_avg_burned_area:.1f}")
+        
+        if performance_improved:
             episodes_since_improvement = 0
             # Save best model
             os.makedirs("checkpoints", exist_ok=True)
             torch.save(model.state_dict(), "checkpoints/qnet_best.pt")
+            print(f"💾 Saving best model (reward: {best_avg_reward:.3f}, burned_area: {best_avg_burned_area:.1f})")
         else:
             episodes_since_improvement += 1
 
         # Regular checkpointing
         if ep % SAVE_EVERY == 0:
             os.makedirs("checkpoints", exist_ok=True)
-            torch.save(
-                {
-                    "epoch": ep,
-                    "model_state_dict": model.state_dict(),
-                    "optimizer_state_dict": opt.state_dict(),
-                    "best_reward": best_avg_reward,
-                    "loss": mean_loss,
-                },
-                f"checkpoints/qnet_ep{ep}.pt",
-            )
+            checkpoint = {
+                "epoch": ep,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": opt.state_dict(),
+                "best_reward": best_avg_reward,
+                "best_burned_area": best_avg_burned_area,
+                "loss": mean_loss,
+                "mean_reward": mean_reward,
+                "mean_burned_area": mean_burned_area,
+                "mean_fuel_breaks": mean_fuel_breaks,
+                "episodes_since_improvement": episodes_since_improvement,
+                "global_step": global_step,
+                "epsilon": eps
+            }
+            torch.save(checkpoint, f"checkpoints/qnet_ep{ep}.pt")
+            print(f"💾 Checkpoint saved for epoch {ep} (reward: {mean_reward:.3f}, burned: {mean_burned_area:.1f})")
 
             # Clear CUDA cache periodically
             if DEVICE == "cuda":
@@ -740,14 +890,17 @@ def main():
                 )
 
     # Final save
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": opt.state_dict(),
-            "best_reward": best_avg_reward,
-        },
-        "checkpoints/qnet_final.pt",
-    )
+    final_checkpoint = {
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": opt.state_dict(),
+        "best_reward": best_avg_reward,
+        "best_burned_area": best_avg_burned_area,
+        "total_episodes": EPISODES,
+        "global_step": global_step,
+        "final_epsilon": eps
+    }
+    torch.save(final_checkpoint, "checkpoints/qnet_final.pt")
+    print(f"💾 Final model saved! Best reward: {best_avg_reward:.3f}, Best burned area: {best_avg_burned_area:.1f}")
 
     vec_env.close()
     print(f"Training completed! Best average reward: {best_avg_reward:.3f}")
