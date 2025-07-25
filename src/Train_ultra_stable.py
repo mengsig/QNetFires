@@ -529,7 +529,7 @@ def main():
     
     # Hyperparams
     EPISODES = 1000  # Increased episodes to utilize all rasters
-    STEPS_PER_EP = 30  # Increased to allow episodes to complete naturally  # Increased steps per episode
+    STEPS_PER_EP = 35  # Increased for natural completion  # Increased to allow episodes to complete naturally  # Increased steps per episode
     BUFFER_CAP = 100_000  # Increased buffer capacity
     BATCH_SIZE = 32  # Reduced from 64 to save memory
     GAMMA = 0.99
@@ -551,10 +551,10 @@ def main():
     GRADIENT_ACCUMULATION_STEPS = 2  # Accumulate gradients to simulate larger batch size
     
     # Vectorized env parameters
-    N_ENVS = 16  # Reduced from 32 to save memory
-    BUDGET = 200
-    K_STEPS = 10
-    SIMS = 1  # Reduced to 1 for maximum stability   # Reduced for stability (fire simulation often fails with higher values)
+    N_ENVS = 16  # Reduced for stability  # Reduced from 32 to save memory
+    BUDGET = 200  # Reduced budget for faster episodes
+    K_STEPS = 8  # Smaller fuel break steps
+    SIMS = 1  # Minimal simulations for maximum stability  # Reduced to 1 for maximum stability   # Reduced for stability (fire simulation often fails with higher values)
     
     # Raster management
     MAX_RASTERS = 500
@@ -882,7 +882,7 @@ def main():
                         vec_env = AsyncVectorEnv(env_fns)
                         reset_out = vec_env.reset()
                         obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
-                        N_ENVS = 2
+                        N_ENVS = 16  # Reduced for stability
                         print(f"⚠️  Running with minimal setup: {N_ENVS} environments")
                     except Exception as final_error:
                         print(f"💥 Critical failure: {final_error}")

@@ -529,7 +529,7 @@ def main():
     
     # Hyperparams
     EPISODES = 1000  # Increased episodes to utilize all rasters
-    STEPS_PER_EP = 30  # Increased to allow episodes to complete naturally  # Increased steps per episode
+    STEPS_PER_EP = 2  # Increased steps per episode
     BUFFER_CAP = 100_000  # Increased buffer capacity
     BATCH_SIZE = 32  # Reduced from 64 to save memory
     GAMMA = 0.99
@@ -554,7 +554,7 @@ def main():
     N_ENVS = 16  # Reduced from 32 to save memory
     BUDGET = 200
     K_STEPS = 10
-    SIMS = 1  # Reduced to 1 for maximum stability   # Reduced for stability (fire simulation often fails with higher values)
+    SIMS = 2   # Reduced for stability (fire simulation often fails with higher values)
     
     # Raster management
     MAX_RASTERS = 500
@@ -903,21 +903,6 @@ def main():
             if rews.shape != (N_ENVS,):
                 rews = rews.reshape(N_ENVS, -1).sum(axis=1)
             dones = np.asarray(dones, dtype=bool)
-            # Enhanced episode completion tracking
-            completed_episodes = 0
-            for i in range(N_ENVS):
-                if dones[i]:
-                    completed_episodes += 1
-                    
-                    # Force episode return calculation if missing
-                    info_i = infos[i] if isinstance(infos, (list, tuple)) else infos
-                    if info_i and "episode_return" not in info_i:
-                        # Calculate episode return from step reward
-                        episode_return = safe_scalar(rews[i])
-                        info_i["episode_return"] = episode_return
-                        info_i["episode_length"] = step + 1
-                        print(f"[env {i}] 🔧 Added missing episode_return: {episode_return:.3f}")
-
 
             # Store transitions
             for i in range(N_ENVS):
@@ -931,40 +916,122 @@ def main():
                 if info_i and "burned" in info_i:
                     burned_area_win.append(safe_scalar(info_i["burned"]))
                 
-                
-                # IMPROVED: Track episode completion with forced episode returns
-                if dones[i]:
-                    info_i = infos[i] if isinstance(infos, (list, tuple)) else infos
-                    
-                    # Get episode return - create if missing
-                    if info_i and "episode_return" in info_i:
-                        episode_reward = safe_scalar(info_i['episode_return'])
-                    else:
-                        # Calculate cumulative episode return from step reward
-                        episode_reward = safe_scalar(rews[i])
-                        if info_i:
-                            info_i["episode_return"] = episode_reward
-                            info_i["episode_length"] = step + 1
-                    
+                # Track episode completion with enhanced logging
+                if info_i and "episode_return" in info_i:
+                    episode_reward = safe_scalar(info_i['episode_return'])
                     episode_rewards.append(episode_reward)
                     reward_win.append(episode_reward)
                     
-                    # Enhanced logging with fire simulation diagnostics
+                    # Enhanced burned area and efficiency tracking
+                    burned_val = info_i.get('burned', None)
+                    burned_scalar = safe_scalar(burned_val, fallback=None)
+                    burned_str = f"{burned_scalar:.1f}" if burned_scalar is not None else 'N/A'
+                    
+                    # Track efficiency metrics
+                    initial_burned = info_i.get('initial_burned', burned_scalar)
+                    reduction_pct = info_i.get('reduction_percentage', 0.0) * 100
+                    
+                    # Add environment diagnostics - safely handle array values
+                    is_dummy_val = info_i.get('is_dummy', False)
+                    env_type = "DUMMY" if safe_scalar(is_dummy_val, fallback=False) else "REAL"
+                    env_id = safe_scalar(info_i.get('env_id', i), fallback=i)
+                    
+                    print(f"[env {i}] 🎯 Episode completed: R={episode_reward:.3f} L={info_i['episode_length']} "
+                          f"Burned={burned_str} Reduction={reduction_pct:.1f}% Type={env_type} ID={env_id}")
+                elif dones[i]:
+                    # Episode ended but no return recorded - likely timeout/error
+                    step_reward = safe_scalar(rews[i])
+                    
+                    # Track this as a timeout episode for debugging
+                    reward_win.append(step_reward)  # Use step reward as episode reward
+                    
+                    # Safe burned value handling with environment info
                     burned_val = info_i.get('burned', None) if info_i else None
                     burned_scalar = safe_scalar(burned_val, fallback=None)
                     burned_str = f"{burned_scalar:.1f}" if burned_scalar is not None else 'N/A'
                     
-                    # Check if this looks like a fire simulation failure
-                    fire_sim_failed = burned_scalar is not None and burned_scalar > 600
-                    status = "🔥 FIRE_SIM_FAILED" if fire_sim_failed else "✅ COMPLETED"
-                    
-                    # Enhanced diagnostics
+                    # Add environment diagnostics - safely handle array values
                     is_dummy_val = info_i.get('is_dummy', False) if info_i else False
                     env_type = "DUMMY" if safe_scalar(is_dummy_val, fallback=False) else "REAL"
                     env_id = safe_scalar(info_i.get('env_id', i) if info_i else i, fallback=i)
                     
-                    print(f"[env {i}] {status} Episode: R={episode_reward:.3f} "
-                          f"Burned={burned_str} Type={env_type} ID={env_id} Step={step+1}"))
+                    print(f"[env {i}] ⏰ Episode timeout/error: Step_reward={step_reward:.3f} "
+                          f"Burned={burned_str} Type={env_type} ID={env_id}")
+
+            obs = nxt
+            global_step += N_ENVS
+            
+            # Update epsilon
+            frac = min(1.0, global_step / EPS_DECAY_STEPS)
+            eps = START_EPS - (START_EPS - END_EPS) * frac
+
+            # Training step with gradient accumulation
+            if len(buf) >= BATCH_SIZE:
+                if USE_PRIORITIZED_REPLAY:
+                    batch, indices, weights = buf.sample(BATCH_SIZE)
+                    weights = weights.to(DEVICE)
+                    loss, td_errors = compute_q_loss(model, tgt, batch, GAMMA, K_STEPS, weights, DEVICE)
+                    buf.update_priorities(indices, td_errors + 1e-6)  # Small epsilon for numerical stability
+                else:
+                    batch = buf.sample(BATCH_SIZE)
+                    loss, _ = compute_q_loss(model, tgt, batch, GAMMA, K_STEPS, device=DEVICE)
+                
+                # Gradient accumulation
+                if MEMORY_EFFICIENT and GRADIENT_ACCUMULATION_STEPS > 1:
+                    loss = loss / GRADIENT_ACCUMULATION_STEPS
+                    loss.backward()
+                    accumulated_loss += loss.item()
+                    accumulation_steps += 1
+                    
+                    if accumulation_steps >= GRADIENT_ACCUMULATION_STEPS:
+                        # Gradient clipping for stability
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+                        opt.step()
+                        opt.zero_grad()
+                        
+                        if USE_LR_SCHEDULER:
+                            scheduler.step()
+                        
+                        loss_win.append(accumulated_loss)
+                        accumulated_loss = 0.0
+                        accumulation_steps = 0
+                        
+                        # Update target network
+                        if global_step % TARGET_SYNC_EVERY == 0:
+                            tgt.load_state_dict(model.state_dict())
+                else:
+                    # Standard training step
+                    opt.zero_grad()
+                    loss.backward()
+                    # Gradient clipping for stability
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+                    opt.step()
+                    
+                    if USE_LR_SCHEDULER:
+                        scheduler.step()
+                    
+                    loss_win.append(loss.item())
+                    
+                    # Update target network
+                    if global_step % TARGET_SYNC_EVERY == 0:
+                        tgt.load_state_dict(model.state_dict())
+
+        # Periodic environment health check (every 50 episodes)
+        if ep > 0 and ep % 50 == 0:
+            print(f"🔍 Environment health check at episode {ep}...")
+            
+            # Check if we've had recent failures
+            recent_failures = getattr(main, '_async_failures', 0)
+            if recent_failures > 0:
+                print(f"⚠️  {recent_failures} AsyncVectorEnv failures detected so far")
+                if recent_failures >= 5:
+                    print("💡 Consider switching to train_sync.py for better stability")
+            else:
+                print("✅ No AsyncVectorEnv failures detected")
+            
+            # Proactive recreation every 100 episodes to prevent pipe corruption
+            if ep % 100 == 0 and ep > 0:
+                print(f"🔄 Proactive environment recreation at episode {ep} (prevents pipe corruption)")
                 try:
                     vec_env.close()
                 except:
@@ -985,29 +1052,11 @@ def main():
                 obs = reset_out[0] if isinstance(reset_out, tuple) else reset_out
                 print(f"✅ Proactively recreated {N_ENVS} environments")
         
-        
-        # Episode completion summary
-        if episode_rewards:
-            print(f"📊 Episode Summary: {len(episode_rewards)}/{N_ENVS} environments completed naturally")
-        else:
-            print(f"⚠️  Episode Summary: 0/{N_ENVS} environments completed - all timed out!")
-            print("💡 Suggestion: Increase STEPS_PER_EP or check fire simulation")
         # Episode statistics with multiple metrics
         mean_loss = float(np.mean(loss_win)) if loss_win else float("nan")
         
-        
-        # IMPROVED: Episode returns with fallback handling
-        if reward_win:
-            mean_episode_reward = float(np.mean(reward_win))
-            print(f"📈 Episode rewards available: {len(reward_win)} episodes, mean={mean_episode_reward:.3f}")
-        else:
-            # Fallback: Use step rewards if no episodes completed
-            if step_reward_win:
-                mean_episode_reward = float(np.mean(step_reward_win))
-                print(f"⚠️  No episode completions - using step reward as fallback: {mean_episode_reward:.3f}")
-            else:
-                mean_episode_reward = float("nan")
-                print(f"❌ No rewards available at all!")
+        # Episode returns (if episodes complete)
+        mean_episode_reward = float(np.mean(reward_win)) if reward_win else float("nan")
         
         # Step rewards (always available)
         mean_step_reward = float(np.mean(step_reward_win)) if step_reward_win else float("nan")

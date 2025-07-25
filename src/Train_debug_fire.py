@@ -45,6 +45,11 @@ project_root = os.path.abspath(os.path.join(script_dir, os.pardir))
 sys.path.insert(0, project_root)
 from src.utils.loadingUtils import RasterManager  # noqa: E402
 
+# DEBUG PARAMETERS FOR FIRE SIMULATION ISSUES
+DEBUG_FIRE_SIM = True
+MAX_BURNED_THRESHOLD = 500  # Values above this suggest fire sim failure
+MIN_STEPS_FOR_COMPLETION = 20  # Episodes should take at least this many steps
+
 
 Transition = namedtuple("Transition", "obs action reward next_obs done")
 
