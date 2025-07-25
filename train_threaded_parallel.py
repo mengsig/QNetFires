@@ -70,13 +70,33 @@ class ThreadedVectorEnv:
         """Create all environments safely."""
         print(f"Creating {self.num_envs} environments with threading...")
         for i, env_fn in enumerate(self.env_fns):
+                    try:
+            env = env_fn()
+            print(f"Environment {i}: ✅ Created successfully")
+            
+            # Test the environment with a simple step
             try:
-                self.envs[i] = env_fn()
-                print(f"Environment {i}: ✅ Created successfully")
-            except Exception as e:
-                print(f"Environment {i}: ❌ Failed: {e}")
-                # Create a minimal dummy environment with proper budget
+                obs, info = env.reset()
+                test_action = np.zeros(obs.shape[-2] * obs.shape[-1], dtype=np.int8)
+                test_action[:5] = 1  # Try to place 5 fuel breaks
+                test_obs, test_reward, test_done, test_trunc, test_info = env.step(test_action)
+                test_new_cells = test_info.get("new_cells", 0)
+                
+                if test_new_cells > 0:
+                    print(f"Environment {i}: ✅ Test step successful ({test_new_cells} breaks placed)")
+                    self.envs[i] = env
+                else:
+                    print(f"Environment {i}: ⚠️  Test step failed (0 breaks placed), using dummy")
+                    self.envs[i] = self._create_dummy_env(budget=self.budget)
+                    
+            except Exception as test_e:
+                print(f"Environment {i}: ⚠️  Test step error: {test_e}, using dummy")
                 self.envs[i] = self._create_dummy_env(budget=self.budget)
+                
+        except Exception as e:
+            print(f"Environment {i}: ❌ Creation failed: {e}")
+            # Create a minimal dummy environment with proper budget
+            self.envs[i] = self._create_dummy_env(budget=self.budget)
     
     def _create_dummy_env(self, budget=250):
         """Create a minimal dummy environment for fallback."""
@@ -315,21 +335,43 @@ def make_env_with_raster(raster, budget, kstep, sims, seed):
                         obs = self.env._make_obs()
                         return obs, 0.0, True, False, {"burned": 0.0, "new_cells": 0, "budget_exceeded": True}
                     
-                    obs, reward, done, truncated, info = self.env.step(action)
+                    # Debug: Check action properties
+                    action_sum = np.sum(action) if hasattr(action, 'sum') else sum(action)
+                    action_dtype = action.dtype if hasattr(action, 'dtype') else type(action)
                     
-                    # Track fuel breaks
-                    new_cells = info.get("new_cells", 0)
-                    self.total_fuel_breaks += new_cells
-                    
-                    # Enforce budget strictly
-                    if self.total_fuel_breaks >= budget:
-                        done = True
-                        self.is_done = True
+                    try:
+                        # Call the underlying environment
+                        obs, reward, done, truncated, info = self.env.step(action)
                         
-                    # Update info with accurate count
-                    info["total_fuel_breaks"] = self.total_fuel_breaks
-                    
-                    return obs, reward, done, truncated, info
+                        # Debug: Check what we got back
+                        new_cells = info.get("new_cells", 0)
+                        burned = info.get("burned", 0)
+                        env_used = getattr(self.env, '_used', 'unknown')
+                        
+                        # Print debug info for first step
+                        if self.total_fuel_breaks == 0:
+                            print(f"      STEP_DEBUG: action_sum={action_sum}, dtype={action_dtype}")
+                            print(f"      STEP_DEBUG: new_cells={new_cells}, burned={burned}, env._used={env_used}")
+                            print(f"      STEP_DEBUG: done={done}, reward={reward}")
+                            
+                        self.total_fuel_breaks += new_cells
+                        
+                        # Enforce budget strictly
+                        if self.total_fuel_breaks >= budget:
+                            done = True
+                            self.is_done = True
+                            
+                        # Update info with accurate count
+                        info["total_fuel_breaks"] = self.total_fuel_breaks
+                        
+                        return obs, reward, done, truncated, info
+                        
+                    except Exception as e:
+                        print(f"      ENV_ERROR: {type(e).__name__}: {e}")
+                        # Return error result
+                        obs = self.env._make_obs() if hasattr(self.env, '_make_obs') else np.random.rand(8, 50, 50).astype(np.float32)
+                        self.is_done = True
+                        return obs, -1.0, True, False, {"burned": 0.0, "new_cells": 0, "error": True}
                     
                 def close(self):
                     if hasattr(self.env, 'close'):
