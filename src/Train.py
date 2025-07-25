@@ -244,10 +244,33 @@ def compute_curriculum_q_loss(model, target_model, batch, gamma, k, budget, glob
             mask.float(), H, W, device
         )
         
-        # Geometric guidance components
-        connectivity_bonus = 0.15 * connectivity_score * torch.abs(td_errors)
-        blob_penalty = 0.1 * compactness_penalty_val * td_errors.pow(2)
-        line_bonus = 0.08 * edge_ratio * torch.abs(td_errors)
+        # Progressive anti-blob strategy: start very strong, then fade
+        # Early phase: Heavy blob punishment to force escape from local minima
+        # Later phase: Lighter guidance to allow performance optimization
+        
+        if global_step < geometric_phase_end // 2:  # First half of geometric phase (0-15k steps)
+            # VERY STRONG anti-blob bias
+            blob_penalty_weight = 0.5  # 5x stronger than before
+            connectivity_bonus_weight = 0.25
+            line_bonus_weight = 0.15
+            phase_name = "ANTI-BLOB"
+        else:  # Second half of geometric phase (15k-30k steps)
+            # Moderate geometric guidance
+            blob_penalty_weight = 0.2
+            connectivity_bonus_weight = 0.15
+            line_bonus_weight = 0.1
+            phase_name = "GEOMETRIC"
+        
+        # Apply the weights
+        connectivity_bonus = connectivity_bonus_weight * connectivity_score * torch.abs(td_errors)
+        blob_penalty = blob_penalty_weight * compactness_penalty_val * td_errors.pow(2)
+        line_bonus = line_bonus_weight * edge_ratio * torch.abs(td_errors)
+        
+        # Add extra punishment for very compact structures in early phase
+        if global_step < geometric_phase_end // 2:
+            # Extra penalty for extremely blob-like structures (compactness > 5)
+            extreme_blob_penalty = 0.3 * torch.clamp(compactness_penalty_val - 5.0, min=0) * td_errors.pow(2)
+            blob_penalty = blob_penalty + extreme_blob_penalty
         
         geometric_loss = blob_penalty - connectivity_bonus - line_bonus
 
@@ -314,11 +337,15 @@ def compute_curriculum_q_loss(model, target_model, batch, gamma, k, budget, glob
         'avg_connectivity': connectivity_score.mean().item(),
         'avg_compactness': compactness_penalty_val.mean().item(), 
         'avg_edge_ratio': edge_ratio.mean().item(),
+        'blob_penalty': blob_penalty.mean().item() if geometric_weight > 0 else 0.0,
+        'connectivity_bonus': connectivity_bonus.mean().item() if geometric_weight > 0 else 0.0,
+        'line_bonus': line_bonus.mean().item() if geometric_weight > 0 else 0.0,
         
         # Curriculum tracking
         'geometric_weight': geometric_weight,
         'performance_weight': performance_weight,
         'curriculum_phase': curriculum_phase,
+        'detailed_phase': phase_name if geometric_weight > 0 else "PERFORMANCE",
         'global_step': global_step
     }
 
@@ -811,10 +838,11 @@ def main():
         print("Using standard Experience Replay")
         
     if USE_SPATIAL_LOSS:
-        print("🎓 Using Curriculum-Based Loss Function:")
-        print("   Phase 1 (0-30k steps): Geometric guidance to escape blob minima")
-        print("   Phase 2 (30k-60k steps): Gradual transition to performance optimization")
-        print("   Phase 3 (60k+ steps): Pure performance focus (immediate improvement + total efficiency)")
+        print("🎓 Using Enhanced Curriculum-Based Loss Function:")
+        print("   Phase 1a (0-15k steps): 🚫 HEAVY anti-blob punishment to escape local minima")
+        print("   Phase 1b (15k-30k steps): 🎯 Moderate geometric guidance for structure")
+        print("   Phase 2 (30k-60k steps): 🔄 Gradual transition to performance optimization")
+        print("   Phase 3 (60k+ steps): 🎖️ Pure performance focus (immediate improvement + total efficiency)")
     else:
         print("📊 Using Enhanced Loss Function (basic efficiency/effectiveness)")
 
@@ -846,6 +874,9 @@ def main():
     connectivity_win = deque(maxlen=1000)
     compactness_win = deque(maxlen=1000)
     edge_ratio_win = deque(maxlen=1000)
+    blob_penalty_win = deque(maxlen=1000)
+    connectivity_bonus_win = deque(maxlen=1000)
+    line_bonus_win = deque(maxlen=1000)
 
     # Training metrics
     best_avg_reward = float("-inf")
@@ -1088,6 +1119,9 @@ def main():
                             connectivity_win.append(metrics.get('avg_connectivity', 0.0))
                             compactness_win.append(metrics.get('avg_compactness', 0.0))
                             edge_ratio_win.append(metrics.get('avg_edge_ratio', 0.0))
+                            blob_penalty_win.append(metrics.get('blob_penalty', 0.0))
+                            connectivity_bonus_win.append(metrics.get('connectivity_bonus', 0.0))
+                            line_bonus_win.append(metrics.get('line_bonus', 0.0))
                         
                         accumulated_loss = 0.0
                         accumulation_steps = 0
@@ -1127,6 +1161,9 @@ def main():
                         connectivity_win.append(metrics.get('avg_connectivity', 0.0))
                         compactness_win.append(metrics.get('avg_compactness', 0.0))
                         edge_ratio_win.append(metrics.get('avg_edge_ratio', 0.0))
+                        blob_penalty_win.append(metrics.get('blob_penalty', 0.0))
+                        connectivity_bonus_win.append(metrics.get('connectivity_bonus', 0.0))
+                        line_bonus_win.append(metrics.get('line_bonus', 0.0))
 
                     # Update target network
                     if global_step % TARGET_SYNC_EVERY == 0:
@@ -1157,6 +1194,9 @@ def main():
         mean_connectivity = float(np.mean(connectivity_win)) if len(connectivity_win) > 0 else 0.0
         mean_compactness = float(np.mean(compactness_win)) if len(compactness_win) > 0 else 0.0
         mean_edge_ratio = float(np.mean(edge_ratio_win)) if len(edge_ratio_win) > 0 else 0.0
+        mean_blob_penalty = float(np.mean(blob_penalty_win)) if len(blob_penalty_win) > 0 else 0.0
+        mean_connectivity_bonus = float(np.mean(connectivity_bonus_win)) if len(connectivity_bonus_win) > 0 else 0.0
+        mean_line_bonus = float(np.mean(line_bonus_win)) if len(line_bonus_win) > 0 else 0.0
         
         current_lr = opt.param_groups[0]["lr"] if USE_LR_SCHEDULER else LR
 
@@ -1166,10 +1206,13 @@ def main():
         print(f"Rewards: mean={mean_reward:.3f}, episodes_completed={len(episode_rewards)}")
         print(f"Environment: burned_area={mean_burned_area:.1f}, fuel_breaks_used={mean_fuel_breaks:.1f}, ep_length={mean_episode_length:.1f}")
         
-        # Curriculum phase detection
-        if global_step < 30000:
+        # Detailed curriculum phase detection
+        if global_step < 15000:
+            curriculum_phase = "🚫 ANTI-BLOB"
+            phase_progress = global_step / 15000 * 100
+        elif global_step < 30000:
             curriculum_phase = "🎯 GEOMETRIC"
-            phase_progress = global_step / 30000 * 100
+            phase_progress = (global_step - 15000) / 15000 * 100
         elif global_step < 60000:
             curriculum_phase = "🔄 TRANSITION" 
             phase_progress = (global_step - 30000) / 30000 * 100
@@ -1184,7 +1227,8 @@ def main():
         
         # Show spatial metrics only during geometric phase
         if global_step < 60000:
-            print(f"Spatial (Geometric Phase): connectivity={mean_connectivity:.3f}, edge_ratio={mean_edge_ratio:.3f}, compactness={mean_compactness:.3f}")
+            print(f"Spatial Metrics: connectivity={mean_connectivity:.3f}, edge_ratio={mean_edge_ratio:.3f}, compactness={mean_compactness:.3f}")
+            print(f"Spatial Forces: blob_penalty={mean_blob_penalty:.4f}, connectivity_bonus={mean_connectivity_bonus:.4f}, line_bonus={mean_line_bonus:.4f}")
             
             # Visual indicators for spatial structure quality
             if mean_connectivity > 2.0:
@@ -1201,7 +1245,12 @@ def main():
             else:
                 shape_indicator = "🔵 BLOB-LIKE"
                 
-            print(f"Structure Quality: {structure_indicator} | Shape Quality: {shape_indicator}")
+            # Special indicator for anti-blob phase
+            if global_step < 15000:
+                blob_strength = "💪 HEAVY" if mean_blob_penalty > 0.1 else "⚡ MODERATE"
+                print(f"Anti-Blob Strength: {blob_strength} | Structure: {structure_indicator} | Shape: {shape_indicator}")
+            else:
+                print(f"Structure Quality: {structure_indicator} | Shape Quality: {shape_indicator}")
         
         print(f"Q-Values: mean={mean_q_value:.3f}")
         print("=" * 70)
